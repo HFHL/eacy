@@ -162,6 +162,8 @@ def list_documents():
     for d in docs:
         d_dict = d.to_dict()
         d_dict['document_type'] = '' # Default unclassified
+        d_dict['patient_id'] = None
+        d_dict['patient_name'] = ''
         
         m = meta_map.get(d.id)
         if m and m.result_json:
@@ -198,6 +200,32 @@ def list_documents():
             d_dict['document_type'] = dt.strip()
             
         result_data.append(d_dict)
+
+    # 为已归档文档附加患者信息，避免前端需要单独查询
+    archived_doc_ids = [d['id'] for d in result_data if d.get('status') == 'ARCHIVED']
+    if archived_doc_ids:
+        from ..models.patient import Patient, PatientDocument
+        patient_links = PatientDocument.query.filter(
+            PatientDocument.document_id.in_(archived_doc_ids),
+            PatientDocument.is_deleted == False
+        ).all()
+        link_map = {link.document_id: link for link in patient_links}
+        patient_ids = list({link.patient_id for link in patient_links})
+        patient_name_map = {}
+        if patient_ids:
+            patients_list = Patient.query.filter(
+                Patient.id.in_(patient_ids),
+                Patient.is_deleted == False
+            ).all()
+            for p in patients_list:
+                name = (p.metadata_json or {}).get('患者姓名', '')
+                patient_name_map[p.id] = name
+        for d_dict in result_data:
+            if d_dict.get('status') == 'ARCHIVED':
+                link = link_map.get(d_dict['id'])
+                if link:
+                    d_dict['patient_id'] = link.patient_id
+                    d_dict['patient_name'] = patient_name_map.get(link.patient_id, '')
 
     return jsonify({
         "success": True,

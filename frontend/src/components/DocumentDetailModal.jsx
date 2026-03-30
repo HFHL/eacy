@@ -1,9 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Modal, Tabs, Spin, Tag, Button, Typography, Input, message, Empty, Alert, Space, Select } from 'antd';
-import { ReloadOutlined, LoadingOutlined, FileTextOutlined, DatabaseOutlined, SaveOutlined, EditOutlined, UserOutlined } from '@ant-design/icons';
+import {
+  ReloadOutlined, LoadingOutlined, FileTextOutlined, DatabaseOutlined,
+  SaveOutlined, EditOutlined, UserOutlined,
+  ZoomInOutlined, ZoomOutOutlined, ExpandOutlined, DragOutlined,
+} from '@ant-design/icons';
 import { getOcrResult, getMetadataResult, updateMetadataResult, reOcrDocument, batchArchiveCommit, extractMetadata } from '../api/document';
 import { getPatients } from '../api/patient';
 import PdfViewer from './PdfViewer';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 
 const { Text } = Typography;
 
@@ -186,7 +193,7 @@ const DocumentDetailModal = ({ open, document, onClose, onRefresh }) => {
       );
     }
     return (
-      <div>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <Tag color={ocrData.status === 'SUCCESS' ? 'success' : ocrData.status === 'FAILED' ? 'error' : 'processing'}>
@@ -202,16 +209,13 @@ const DocumentDetailModal = ({ open, document, onClose, onRefresh }) => {
           <Alert type="error" showIcon message={ocrData.error_msg} style={{ marginBottom: 12 }} />
         )}
         <div style={{
+          flex: 1, minHeight: 0,
           background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8,
-          padding: '16px 20px', maxHeight: 500, overflow: 'auto',
+          padding: '16px 20px', overflow: 'auto',
         }}>
-          <pre style={{
-            margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-            fontFamily: '"SF Mono", "Fira Code", "Consolas", monospace',
-            fontSize: 12, lineHeight: 1.7, color: '#333',
-          }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
             {ocrData.ocr_markdown || '（无文本内容）'}
-          </pre>
+          </ReactMarkdown>
         </div>
       </div>
     );
@@ -329,45 +333,84 @@ const DocumentDetailModal = ({ open, document, onClose, onRefresh }) => {
     );
   };
 
-  // ─── Document Preview (Left Panel) ────────────
-  const DocumentPreview = () => {
-    if (!document) return null;
-    const isPdf = document.mime_type?.includes('pdf');
-    const isImage = document.mime_type?.startsWith('image/');
+  // ─── Document Preview: zoom + drag (PDF & Image 共用) ────────────
+  const [previewScale, setPreviewScale] = useState(1.0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = React.useRef({ x: 0, y: 0, sx: 0, sy: 0 });
+  const dragPosRef = React.useRef({ x: 0, y: 0 });
+  const transformRef = React.useRef(null);
+  const rafRef = React.useRef(null);
 
-    // 通过后端代理访问 OSS，绕过 Referer 防盗链
-    const proxyUrl = `/api/documents/${docId}/preview`;
+  const applyTransform = useCallback((scale = previewScale) => {
+    if (!transformRef.current) return;
+    const { x, y } = dragPosRef.current;
+    transformRef.current.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  }, [previewScale]);
 
-    if (!document.oss_url) {
-      return (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#8c8c8c' }}>
-          <Empty description="文档预览不可用" />
-        </div>
-      );
+  useEffect(() => {
+    setPreviewScale(1.0);
+    dragPosRef.current = { x: 0, y: 0 };
+    requestAnimationFrame(() => applyTransform(1.0));
+  }, [docId]);
+
+  useEffect(() => {
+    applyTransform(previewScale);
+  }, [previewScale, applyTransform]);
+
+  const handleWheel = useCallback((e) => {
+    e.preventDefault();
+    setPreviewScale(prev => {
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      return Math.max(0.2, Math.min(5.0, +(prev + delta).toFixed(2)));
+    });
+  }, []);
+
+  const handleMouseDown = useCallback((e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    setIsDragging(true);
+    const { x, y } = dragPosRef.current;
+    dragStartRef.current = { x: e.clientX, y: e.clientY, sx: x, sy: y };
+  }, []);
+
+  const handleMouseMove = useCallback((e) => {
+    if (!isDragging) return;
+    dragPosRef.current = {
+      x: dragStartRef.current.sx + (e.clientX - dragStartRef.current.x),
+      y: dragStartRef.current.sy + (e.clientY - dragStartRef.current.y),
+    };
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => applyTransform());
+  }, [isDragging, applyTransform]);
+
+  const handleMouseUp = useCallback(() => setIsDragging(false), []);
+
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
     }
+  }, [isDragging, handleMouseMove, handleMouseUp]);
 
-    if (isPdf) {
-      return (
-        <div style={{ width: '100%', height: '100%', overflow: 'hidden' }}>
-          <PdfViewer url={proxyUrl} scale={1.2} />
-        </div>
-      );
-    }
+  useEffect(() => () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+  }, []);
 
-    if (isImage) {
-      return (
-        <div style={{ width: '100%', height: '100%', overflow: 'auto', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 16 }}>
-          <img src={proxyUrl} alt={document.filename} style={{ maxWidth: '100%', borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }} />
-        </div>
-      );
-    }
-
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#8c8c8c' }}>
-        <Empty description="暂不支持预览此类型文件" />
-      </div>
-    );
+  const zoomIn = () => setPreviewScale(s => Math.min(5.0, +(s + 0.2).toFixed(1)));
+  const zoomOut = () => setPreviewScale(s => Math.max(0.2, +(s - 0.2).toFixed(1)));
+  const resetView = () => {
+    setPreviewScale(1.0);
+    dragPosRef.current = { x: 0, y: 0 };
+    requestAnimationFrame(() => applyTransform(1.0));
   };
+
+  const isPdf = document?.mime_type?.includes('pdf');
+  const isImage = document?.mime_type?.startsWith('image/');
+  const proxyUrl = docId ? `/api/documents/${docId}/preview` : '';
 
   const tabItems = [
     {
@@ -433,18 +476,85 @@ const DocumentDetailModal = ({ open, document, onClose, onRefresh }) => {
           flex: 1, borderRight: '1px solid #f0f0f0', background: '#f8f9fa',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
-          <div style={{ padding: '10px 16px', borderBottom: '1px solid #f0f0f0', background: '#fff' }}>
-            <Text strong style={{ fontSize: 13, color: '#595959' }}>📄 文档原文</Text>
+          {/* Zoom Toolbar */}
+          <div style={{
+            padding: '6px 16px', borderBottom: '1px solid #f0f0f0', background: '#fff',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0,
+          }}>
+            <Text strong style={{ fontSize: 13, color: '#595959' }}>文档原文</Text>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              background: '#fff', borderRadius: 6,
+              border: '1px solid #e8e8e8', padding: '2px 6px',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+            }}>
+              <Button type="text" size="small" icon={<ZoomOutOutlined />} onClick={zoomOut} disabled={previewScale <= 0.2} />
+              <span style={{ fontSize: 12, color: '#595959', minWidth: 40, textAlign: 'center', fontFamily: 'monospace', userSelect: 'none' }}>
+                {Math.round(previewScale * 100)}%
+              </span>
+              <Button type="text" size="small" icon={<ZoomInOutlined />} onClick={zoomIn} disabled={previewScale >= 5.0} />
+              <div style={{ width: 1, height: 16, background: '#e8e8e8' }} />
+              <Button type="text" size="small" icon={<ExpandOutlined />} onClick={resetView} title="重置" />
+            </div>
           </div>
-          <div style={{ flex: 1, overflow: 'hidden' }}>
-            <DocumentPreview />
+
+          {/* Preview Content — PDF 和图片共用一套 transform 容器，不触发子组件重建 */}
+          <div
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            style={{
+              flex: 1, overflow: 'hidden', position: 'relative',
+              cursor: isDragging ? 'grabbing' : 'grab',
+              userSelect: 'none',
+              background: '#e8e8e8',
+            }}
+          >
+            {!document?.oss_url ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#8c8c8c' }}>
+                <Empty description="文档预览不可用" />
+              </div>
+            ) : (isPdf || isImage) ? (
+              <div style={{
+                width: '100%', height: '100%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                overflow: 'hidden',
+              }}>
+                <div ref={transformRef} style={{
+                  transform: `translate(0px, 0px) scale(${previewScale})`,
+                  transformOrigin: 'center center',
+                  transition: isDragging ? 'none' : 'transform 0.12s ease-out',
+                }}>
+                  {isPdf ? (
+                    <PdfViewer url={proxyUrl} scale={1.0} />
+                  ) : (
+                    <img
+                      src={proxyUrl}
+                      alt={document?.filename}
+                      draggable={false}
+                      style={{
+                        display: 'block',
+                        maxHeight: '70vh',
+                        borderRadius: 4,
+                        boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
+                        pointerEvents: 'none',
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#8c8c8c' }}>
+                <Empty description="暂不支持预览此类型文件" />
+              </div>
+            )}
           </div>
         </div>
 
         {/* Right: OCR + Metadata Tabs */}
         <div style={{ width: 520, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ flex: 1, overflow: 'auto', padding: '0 20px 20px' }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '0 20px' }}>
             <Tabs
+              className="document-detail-tabs"
               activeKey={activeTab}
               onChange={setActiveTab}
               items={tabItems}
@@ -454,6 +564,18 @@ const DocumentDetailModal = ({ open, document, onClose, onRefresh }) => {
           </div>
         </div>
       </div>
+      <style>{`
+        .document-detail-tabs,
+        .document-detail-tabs .ant-tabs-content-holder,
+        .document-detail-tabs .ant-tabs-content,
+        .document-detail-tabs .ant-tabs-tabpane {
+          height: 100%;
+        }
+        .document-detail-tabs .ant-tabs-content-holder,
+        .document-detail-tabs .ant-tabs-tabpane {
+          overflow: hidden;
+        }
+      `}</style>
     </Modal>
   );
 };
