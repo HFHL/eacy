@@ -118,9 +118,30 @@ def register_oss_document():
 @document_bp.route('', methods=['GET'], strict_slashes=False)
 @document_bp.route('/', methods=['GET'], strict_slashes=False)
 def list_documents():
-    """获取文档列表以供 Dashboard 查阅（强制按当前登录用户隔离隔离）"""
+    """获取文档列表以供 Dashboard 查阅（强制按当前登录用户隔离）
+    
+    支持的 Query 参数：
+    - task_status: 按状态筛选，多个用逗号分隔（如 uploaded,parsing,archived）
+    - keyword: 按文件名模糊搜索
+    """
     user_id = int(request.headers.get('X-User-Id', 1))
-    docs = Document.query.filter_by(is_deleted=False, uploader_id=user_id).order_by(Document.created_at.desc()).all()
+    
+    # 基础查询
+    query = Document.query.filter_by(is_deleted=False, uploader_id=user_id)
+    
+    # 按 task_status 筛选（支持逗号分隔的多值）
+    task_status_param = request.args.get('task_status', '').strip()
+    if task_status_param:
+        statuses = [s.strip() for s in task_status_param.split(',') if s.strip()]
+        if statuses:
+            query = query.filter(Document.status.in_(statuses))
+    
+    # 按文件名关键词搜索
+    keyword = request.args.get('keyword', '').strip()
+    if keyword:
+        query = query.filter(Document.filename.ilike(f'%{keyword}%'))
+    
+    docs = query.order_by(Document.created_at.desc()).all()
     
     from ..models.metadata_result import MetadataResult
     
@@ -129,7 +150,7 @@ def list_documents():
     metas = MetadataResult.query.filter(
         MetadataResult.document_id.in_(doc_ids),
         MetadataResult.status == MetadataResult.STATUS_SUCCESS
-    ).all()
+    ).all() if doc_ids else []
     
     # Group by latest metadata per document
     meta_map = {}
@@ -147,7 +168,13 @@ def list_documents():
             js = m.result_json
             # Safely extract from common schema aliases
             dt = ""
-            if js.get('文档分类'):
+            # 优先匹配当前 schema 的标准字段名
+            if js.get('文档类型'):
+                dt = str(js['文档类型'])
+                sub = js.get('文档子类型', '')
+                if sub:
+                    dt = f"{dt} - {str(sub)}"
+            elif js.get('文档分类'):
                 # it could be a string or a dict like {"主类型": "检验检查报告", "子类型": "xx"}
                 if isinstance(js['文档分类'], dict):
                     dt = js['文档分类'].get('主类型', '')

@@ -8,6 +8,15 @@ from google.adk.apps.app import App
 from google.adk.events import Event
 from google.adk.models.lite_llm import LiteLlm
 from google.genai import types as genai_types
+import litellm
+
+# ==========================================
+# 全局防并发限流配置 (拦截 429 Error 并自动退避延时再试，把 TPS 消化在 50 以内)
+# ==========================================
+litellm.num_retries = 6 
+litellm.retry_policy = "exponential_backoff_retry"
+litellm.request_timeout = 180
+
 
 
 def _parse_json_from_text(text: str) -> dict:

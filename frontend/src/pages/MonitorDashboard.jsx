@@ -380,7 +380,7 @@ const MonitorDashboard = () => {
               label: <Badge count={ocrTasks.length} size="small" offset={[10, 0]}><span>⚕️ OCR 识别管道 (Stage 1)</span></Badge>,
               children: (
                 <div style={{ marginTop: 16 }}>
-                  <Table dataSource={ocrTasks} columns={ocrColumns} pagination={false} rowKey="id" size="middle" />
+                  <Table dataSource={ocrTasks} columns={ocrColumns} pagination={false} rowKey="id" size="middle" scroll={{ x: 'max-content' }} />
                 </div>
               )
             },
@@ -389,7 +389,7 @@ const MonitorDashboard = () => {
               label: <Badge count={extractionTasks.length} size="small" offset={[10, 0]}><span>📖 元数据提取管道 (Stage 2)</span></Badge>,
               children: (
                 <div style={{ marginTop: 16 }}>
-                  <Table dataSource={extractionTasks} columns={extractionColumns} pagination={false} rowKey="id" size="middle" />
+                  <Table dataSource={extractionTasks} columns={extractionColumns} pagination={false} rowKey="id" size="middle" scroll={{ x: 'max-content' }} />
                 </div>
               )
             },
@@ -398,7 +398,7 @@ const MonitorDashboard = () => {
               label: <Badge dot offset={[5, 0]}><span>🔬 CRF自动推理填充管道 (Stage 3)</span></Badge>,
               children: (
                 <div style={{ marginTop: 16 }}>
-                  <Table dataSource={crfTasks} columns={crfColumns} pagination={false} rowKey="id" size="middle" />
+                  <Table dataSource={crfTasks} columns={crfColumns} pagination={false} rowKey="id" size="middle" scroll={{ x: 'max-content' }} />
                 </div>
               )
             }

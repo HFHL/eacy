@@ -325,8 +325,8 @@ def batch_commit():
                 old_patient_ids.add(old_link.patient_id)
                 old_link.is_deleted = True
                 
-            # Check for a soft-deleted record (same patient+doc) and reactivate it
-            deleted_pd = PatientDocument.query.filter_by(patient_id=patient_id, document_id=doc_id, is_deleted=True).first()
+            # Check for any existing record (same patient+doc) and reactivate/update it
+            existing_pd = PatientDocument.query.filter_by(patient_id=patient_id, document_id=doc_id).first()
             
             # Dynamic metadata extraction
             meta = MetadataResult.query.filter_by(document_id=doc_id, status=MetadataResult.STATUS_SUCCESS).order_by(MetadataResult.created_at.desc()).first()
@@ -353,14 +353,14 @@ def batch_commit():
             
             ddate = result.get('文档生效日期') or result.get('报告日期') or result.get('检查日期') or result.get('报告时间') or result.get('collection_time') or result.get('report_date') or ''
             
-            if deleted_pd:
-                # Reactivate the soft-deleted link
-                deleted_pd.is_deleted = False
-                deleted_pd.doc_type = dt.strip() if dt else result.get('文档类型')
-                deleted_pd.doc_subtype = result.get('文档子类型')
-                deleted_pd.doc_title = result.get('文档标题')
-                deleted_pd.doc_date = str(ddate).strip()
-                deleted_pd.source = source
+            if existing_pd:
+                # Reactivate and update the link
+                existing_pd.is_deleted = False
+                existing_pd.doc_type = dt.strip() if dt else result.get('文档类型')
+                existing_pd.doc_subtype = result.get('文档子类型')
+                existing_pd.doc_title = result.get('文档标题')
+                existing_pd.doc_date = str(ddate).strip()
+                existing_pd.source = source
             else:
                 pd = PatientDocument(
                     patient_id=patient_id,

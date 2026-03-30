@@ -10,7 +10,6 @@ import {
   Tooltip,
   Modal,
   Badge,
-  Upload,
   message,
   Dropdown,
 } from 'antd';
@@ -26,47 +25,21 @@ import {
   DownloadOutlined,
   CheckCircleOutlined,
   RobotOutlined,
-  InboxOutlined,
   FolderAddOutlined,
-  FileTextOutlined, // Added from instruction
-  ExclamationCircleOutlined, // Added from instruction
+  FileTextOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import api, { getDocumentList, getUploadSignature, reportUploadCallback, getSystemConfig, deleteDocument, reOcrDocument, extractMetadata, archiveDocument } from '../api/document';
+import api, { getDocumentList, getSystemConfig, deleteDocument, reOcrDocument, extractMetadata, archiveDocument } from '../api/document';
 import { getPatients } from '../api/patient';
+import UploadPanel from '../components/UploadPanel';
 import DocumentDetailModal from '../components/DocumentDetailModal';
 import GroupRowDisplay from '../components/GroupRowDisplay';
 import PatientConflictDrawer from '../components/PatientConflictDrawer';
 
-// 全局级别的并发上传队列调度器
-const uploadQueue = [];
-let activeUploads = 0;
-let MAX_CONCURRENT_UPLOADS = 3; // 默认值，将被 db 覆盖
 
-const enqueueUpload = (taskFn) => {
-  return new Promise((resolve, reject) => {
-    uploadQueue.push({ taskFn, resolve, reject });
-    processQueue();
-  });
-};
-
-const processQueue = async () => {
-  if (activeUploads >= MAX_CONCURRENT_UPLOADS || uploadQueue.length === 0) return;
-  activeUploads++;
-  const { taskFn, resolve, reject } = uploadQueue.shift();
-  try {
-    const res = await taskFn();
-    resolve(res);
-  } catch (error) {
-    reject(error);
-  } finally {
-    activeUploads--;
-    processQueue();
-  }
-};
 
 const { Text } = Typography;
-const { Dragger } = Upload;
 
 // Formatting Utils
 const formatFileSize = (bytes) => {
@@ -140,25 +113,60 @@ const StatusProgressBar = ({ status }) => {
   const { filled = 0, processing, failed, pending, done } = map[status] || {};
   
   let filledColor = '#1677ff';
-  if (done) filledColor = '#52c41a';
-  else if (pending) filledColor = '#faad14';
+  let textColor = '#8c8c8c';
+  if (done)          { filledColor = '#52c41a'; textColor = '#52c41a'; }
+  else if (pending)  { filledColor = '#faad14'; textColor = '#fa8c16'; }
+  else if (failed)   { textColor = '#ff4d4f'; }
+  else if (processing) { textColor = '#1677ff'; }
+  
+  const getSegColor = (idx) => {
+    if (failed && idx === filled) return '#ff4d4f';
+    if (processing && idx === filled) return done ? filledColor : '#91caff';
+    if (idx < filled) return filledColor;
+    return '#f0f0f0';
+  };
+
+  const textMap = {
+    uploaded: '解析中',
+    PENDING: '等待分发',
+    METADATA_EXTRACTING: 'OCR识别中',
+    parsing: '解析中',
+    parsed: '解析中',
+    COMPLETED: 'OCR完成',
+    EXTRACTING_METADATA: '正在抽取',
+    EXTRACT_DONE: '等待归档',
+    EXTRACT_FAILED: '抽取失败',
+    extracted: '解折中',
+    ai_matching: '解析中',
+    auto_archived: '待归档',
+    pending_confirm_review: '待归档',
+    archived: '已归档',
+    ARCHIVED: '已归档',
+    METADATA_FAILED: '异常',
+    parse_failed: '异常',
+  };
+  const textLabel = textMap[status] || (failed ? '异常' : done ? '已归档' : processing ? '进行中' : pending ? '待确认' : '解析中');
   
   return (
     <Tooltip title={STAGE_LABELS.join(' → ')}>
-      <div style={{ width: 100 }}>
+      <div style={{ width: '100%', minWidth: 90 }}>
         <div style={{ display: 'flex', gap: 2, marginBottom: 4 }}>
           {STAGE_LABELS.map((_, i) => (
             <div
               key={i}
               style={{
-                flex: 1, height: 4, borderRadius: 2,
-                background: failed && i === filled ? '#ff4d4f' : i < filled ? filledColor : '#f0f0f0',
+                flex: 1, height: 6, borderRadius: 3,
+                background: getSegColor(i),
+                transition: 'background 0.3s'
               }}
             />
           ))}
         </div>
-        <div style={{ fontSize: 11, color: failed ? '#ff4d4f' : '#8c8c8c' }}>
-          {failed ? '异常' : done ? '已归档' : processing ? '进行中' : pending ? '待确认' : '解析中'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {processing && <LoadingOutlined spin style={{ fontSize: 10, color: '#1677ff' }} />}
+          <span style={{ fontSize: 11, color: textColor, lineHeight: 1, whiteSpace: 'nowrap' }}>
+            {textLabel}
+          </span>
         </div>
       </div>
     </Tooltip>
@@ -169,7 +177,7 @@ const AIProcessing = () => {
   const [activeTab, setActiveTab] = useState('all');
   const [searchText, setSearchText] = useState('');
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
-  const [uploadModalVisible, setUploadModalVisible] = useState(false);
+  const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
   
   // Grouping Batch Wizard In-page State
   const CLUSTERS_CACHE_KEY = 'eacy_ai_archive_clusters';
@@ -209,6 +217,17 @@ const AIProcessing = () => {
   const [total, setTotal] = useState(0);
   const [tabsCount, setTabsCount] = useState({ all: 0, parse: 0, todo: 0, archived: 0 });
 
+  // Tab → 后端 task_status 映射（按 Document 模型实际 status 常量）
+  const TAB_STATUS_MAP = {
+    all: null,
+    // 待解析：上传后进入解析流程的各阶段（含失败）
+    parse: 'PENDING,UPLOADING,UPLOAD_FAILED,METADATA_EXTRACTING,METADATA_FAILED,COMPLETED,EXTRACTING_METADATA,EXTRACT_FAILED',
+    // 待归档：已完成抽取，等待人工确认归档
+    todo: 'EXTRACT_DONE',
+    // 已归档
+    archived: 'ARCHIVED',
+  };
+
   // Tabs config
   const tabs = [
     { key: 'all', label: '全部', count: tabsCount.all },
@@ -217,11 +236,13 @@ const AIProcessing = () => {
     { key: 'archived', label: '已归档', count: tabsCount.archived },
   ];
 
-  const fetchDocuments = async () => {
+  const fetchDocuments = async (tabOverride) => {
+    const tab = tabOverride !== undefined ? tabOverride : activeTab;
     setLoading(true);
     try {
+      const taskStatus = TAB_STATUS_MAP[tab] || undefined;
       const res = await getDocumentList({ 
-        status: activeTab === 'all' ? undefined : activeTab,
+        task_status: taskStatus,
         keyword: searchText || undefined
       });
       // The backend returns { success: true, data: [{}, {}] }
@@ -230,10 +251,6 @@ const AIProcessing = () => {
       if (res && Array.isArray(res.data)) {
         setFileList(res.data);
         setTotal(res.data.length);
-        
-        if (activeTab === 'all') {
-           setTabsCount(prev => ({ ...prev, all: res.data.length }));
-        }
       } else if (res && Array.isArray(res)) {
          // Fallback if the API returns a direct array
          setFileList(res);
@@ -244,6 +261,33 @@ const AIProcessing = () => {
       message.error('获取文档列表失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 并行获取每个 Tab 的文档总数
+  const fetchTabCounts = async () => {
+    try {
+      const [allRes, parseRes, todoRes, archivedRes] = await Promise.allSettled([
+        getDocumentList({ keyword: searchText || undefined }),
+        getDocumentList({ task_status: TAB_STATUS_MAP.parse, keyword: searchText || undefined }),
+        getDocumentList({ task_status: TAB_STATUS_MAP.todo, keyword: searchText || undefined }),
+        getDocumentList({ task_status: TAB_STATUS_MAP.archived, keyword: searchText || undefined }),
+      ]);
+      const getCount = (r) => {
+        if (r.status !== 'fulfilled') return 0;
+        const v = r.value;
+        if (v && Array.isArray(v.data)) return v.data.length;
+        if (v && Array.isArray(v)) return v.length;
+        return 0;
+      };
+      setTabsCount({
+        all: getCount(allRes),
+        parse: getCount(parseRes),
+        todo: getCount(todoRes),
+        archived: getCount(archivedRes),
+      });
+    } catch (e) {
+      // 计数失败不阻断主流程
     }
   };
 
@@ -333,6 +377,7 @@ const AIProcessing = () => {
 
   useEffect(() => {
     fetchDocuments();
+    fetchTabCounts();
     getSystemConfig().then(res => {
        if (res && res.data && res.data.max_concurrent_uploads) {
            MAX_CONCURRENT_UPLOADS = parseInt(res.data.max_concurrent_uploads, 10) || 3;
@@ -526,109 +571,7 @@ const AIProcessing = () => {
     },
   ];
 
-  // Custom Upload logic via ali-oss Multipart wrapped by Concurrency Limiter
-  const executeCustomRequest = async ({ file, onSuccess, onError, onProgress }) => {
-    try {
-      // 1. 获取 STS 签名凭证
-      const signRes = await getUploadSignature();
-      const payload = signRes.data || signRes; 
-      
-      const { accessKeyId, accessKeySecret, stsToken, region, bucket, dir } = payload;
-      if (!stsToken) {
-        throw new Error('未获取到 OSS STS 令牌');
-      }
 
-      // SDK expects region to strictly be like 'oss-cn-beijing'
-      const formattedRegion = region.startsWith('oss-') ? region : `oss-${region}`;
-
-      // 2. 初始化 OSS 客户端
-      const client = new OSS({
-        region: formattedRegion,
-        accessKeyId,
-        accessKeySecret,
-        stsToken,
-        bucket,
-        // STS tokens generally have a short expiration
-        refreshSTSToken: async () => {
-           const refresh = await getUploadSignature();
-           const rp = refresh.data || refresh;
-           return {
-             accessKeyId: rp.accessKeyId,
-             accessKeySecret: rp.accessKeySecret,
-             stsToken: rp.stsToken,
-           };
-        }
-      });
-
-      // 生成 OSS 对象名 (防止重名)
-      const ossKey = `${dir}${Date.now()}_${file.name}`;
-      
-      // 检查并在本地存储中找断点 (Checkpoint)
-      // 使用文件名和大小作为简单的 Hash 键
-      const fileCheckpointKey = `upload_cp_${file.name}_${file.size}`;
-      const savedCheckpoint = localStorage.getItem(fileCheckpointKey);
-      let checkpointArg = savedCheckpoint ? JSON.parse(savedCheckpoint) : undefined;
-
-      // 3. 分片断点上传启动
-      const result = await client.multipartUpload(ossKey, file, {
-        parallel: 3, // 并发数限制为3
-        partSize: 1024 * 1024 * 5, // 5MB一片
-        progress: (p, cpt, res) => {
-          // 保存断点至本地
-          if (cpt) {
-            localStorage.setItem(fileCheckpointKey, JSON.stringify(cpt));
-          }
-          onProgress({ percent: Math.round(p * 100) });
-        },
-        checkpoint: checkpointArg,
-        meta: {
-          year: new Date().getFullYear(),
-          people: 'eacy-user'
-        }
-      });
-
-      // 上传成功，清除断点记录
-      localStorage.removeItem(fileCheckpointKey);
-
-      // 4. 上传完成回调我们的后端，通知入库和走 AI 解析流水线
-      // 假设 result.name 或 ossKey 是有效的对象键
-      await reportUploadCallback(`${bucket}.${region}.aliyuncs.com/${ossKey}`, file.name, file.type, file.size);
-
-      onSuccess(payload, file);
-      message.success(`${file.name} 上传完成，已加入任务队列`);
-      
-      // 刷新列表
-      fetchDocuments();
-
-    } catch (err) {
-      if (err.name === 'cancel') {
-        message.warning(`${file.name} 上传被暂停`);
-      } else {
-        console.error('Upload error', err);
-        onError(err);
-        message.error(`${file.name} 上传失败`);
-      }
-    }
-  };
-
-  const handleCustomRequest = (args) => {
-    return enqueueUpload(() => executeCustomRequest(args));
-  };
-
-  const uploadProps = {
-    name: 'file',
-    multiple: true,
-    showUploadList: true,
-    customRequest: handleCustomRequest,
-    beforeUpload: (file) => {
-      const isAllowed = ['application/pdf', 'image/jpeg', 'image/png'].includes(file.type);
-      if (!isAllowed) {
-        message.warning(`${file.name} 类型不被支持`);
-        return Upload.LIST_IGNORE;
-      }
-      return true;
-    }
-  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#fff' }}>
@@ -650,13 +593,14 @@ const AIProcessing = () => {
                 key={tab.key}
                 type={isActive ? 'primary' : 'text'}
                 style={{
-                  borderRadius: 4,
+                  borderRadius: 6,
                   padding: '4px 16px',
                   height: '32px',
                   fontWeight: isActive ? 500 : 400,
                   color: isActive ? '#fff' : '#595959',
                   background: isActive ? '#1677ff' : 'transparent',
                   border: 'none',
+                  transition: 'background 0.3s'
                 }}
                 onClick={() => setActiveTab(tab.key)}
               >
@@ -702,7 +646,7 @@ const AIProcessing = () => {
           <Button 
             type="primary" 
             icon={<UploadOutlined />} 
-            onClick={() => setUploadModalVisible(true)}
+            onClick={() => setUploadPanelOpen(true)}
             style={{ borderRadius: 4 }}
           >
             上传文档
@@ -768,30 +712,15 @@ const AIProcessing = () => {
         />
       </div>
 
-      {/* Upload Modal */}
-      <Modal
-        title="上传医疗文档"
-        open={uploadModalVisible}
-        onCancel={() => setUploadModalVisible(false)}
-        footer={null}
-        width={600}
-        centered
-        destroyOnHidden
-      >
-        <div style={{ marginTop: 24, marginBottom: 24 }}>
-          <Dragger {...uploadProps}>
-            <p className="ant-upload-drag-icon">
-              <InboxOutlined style={{ color: '#1677ff', fontSize: 48 }} />
-            </p>
-            <p className="ant-upload-text" style={{ fontSize: 16, fontWeight: 500, color: '#262626' }}>
-              点击或将文件拖拽到这里上传
-            </p>
-            <p className="ant-upload-hint" style={{ color: '#8c8c8c', marginTop: 8 }}>
-              支持单次或批量直传 OSS。支持 PDF, JPG, PNG 格式，单个文件不超过 50MB。
-            </p>
-          </Dragger>
-        </div>
-      </Modal>
+      {/* 新版上传面板（支持文件夹，带悬浮球和侧边 Drawer） */}
+      <UploadPanel
+        externalOpen={uploadPanelOpen}
+        onExternalOpenChange={setUploadPanelOpen}
+        onUploadComplete={() => {
+          fetchDocuments();
+          fetchTabCounts();
+        }}
+      />
 
       {/* Document Detail Modal */}
       <DocumentDetailModal

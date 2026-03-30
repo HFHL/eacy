@@ -6,8 +6,8 @@ import {
 } from 'antd';
 import {
   PlusOutlined, DeleteOutlined, SaveOutlined,
-  FolderOpenOutlined, FormOutlined, FileTextOutlined, ArrowLeftOutlined,
-  EditOutlined, HolderOutlined, AppstoreOutlined, SettingOutlined
+  FolderOutlined, FolderOpenOutlined, FormOutlined, FileTextOutlined, ArrowLeftOutlined,
+  EditOutlined, HolderOutlined, AppstoreOutlined, SettingOutlined, BranchesOutlined
 } from '@ant-design/icons';
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay
@@ -23,13 +23,13 @@ const { Title, Text } = Typography;
 
 // ─── 核心配置 ──────────────────────────────────
 const FIELD_TYPES = [
-  { value: 'text', label: '文本', color: '#1677ff', icon: '📝' },
-  { value: 'number', label: '数字', color: '#52c41a', icon: '🔢' },
-  { value: 'date', label: '日期', color: '#faad14', icon: '📅' },
-  { value: 'radio', label: '单选', color: '#eb2f96', icon: '🔘' },
-  { value: 'checkbox', label: '多选', color: '#13c2c2', icon: '☑️' },
-  { value: 'multirow', label: '多行子表', color: '#fa8c16', icon: '📋' },
-  { value: 'table', label: '表格', color: '#722ed1', icon: '📊' },
+  { value: 'text',     label: '文本',   color: '#1677ff', bg: '#e6f4ff', icon: '📝' },
+  { value: 'number',  label: '数字',   color: '#52c41a', bg: '#f6ffed', icon: '🔢' },
+  { value: 'date',    label: '日期',   color: '#faad14', bg: '#fffbe6', icon: '📅' },
+  { value: 'radio',   label: '单选',   color: '#eb2f96', bg: '#fff0f6', icon: '🔘' },
+  { value: 'checkbox',label: '多选',   color: '#13c2c2', bg: '#e6fffb', icon: '☑️' },
+  { value: 'multirow',label: '多行子表',color: '#fa8c16', bg: '#fff7e6', icon: '📋' },
+  { value: 'table',   label: '表格',   color: '#722ed1', bg: '#f9f0ff', icon: '📊' },
 ];
 
 const TYPE_MAP = Object.fromEntries(FIELD_TYPES.map(t => [t.value, t]));
@@ -37,7 +37,7 @@ const TYPE_MAP = Object.fromEntries(FIELD_TYPES.map(t => [t.value, t]));
 let _uid = Date.now();
 const nextId = (prefix) => `${prefix}_${++_uid}`;
 
-// ─── 左侧：可拖拽的组件库卡片 ───────────────────────
+/* ─── 左侧：可拖拽的组件库卡片（旧版 .component-item 风格）─── */
 const DraggableComponent = ({ typeConf }) => {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `new-component-${typeConf.value}`,
@@ -50,32 +50,51 @@ const DraggableComponent = ({ typeConf }) => {
       {...listeners}
       {...attributes}
       style={{
-        padding: '8px 12px',
-        background: '#fff',
-        border: '1px solid #f0f0f0',
-        borderRadius: 6,
-        cursor: 'grab',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
+        padding: '8px 12px',
+        background: '#fff',
+        border: '1px solid #d9d9d9',
+        borderRadius: 4,
+        cursor: 'grab',
         opacity: isDragging ? 0.4 : 1,
-        transition: 'all 0.2s',
+        transition: 'border-color 0.2s, box-shadow 0.2s',
+        userSelect: 'none',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = typeConf.color; e.currentTarget.style.color = typeConf.color; }}
-      onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#f0f0f0'; e.currentTarget.style.color = 'inherit'; }}
+      onMouseEnter={e => {
+        e.currentTarget.style.borderColor = typeConf.color;
+        e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.08)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.borderColor = '#d9d9d9';
+        e.currentTarget.style.boxShadow = 'none';
+      }}
     >
-      <span style={{ fontSize: 16 }}>{typeConf.icon}</span>
-      <span style={{ fontSize: 13, fontWeight: 500 }}>{typeConf.label}</span>
+      {/* 图标徽章 */}
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        width: 24, height: 24,
+        background: typeConf.bg,
+        color: typeConf.color,
+        borderRadius: 4,
+        fontSize: 13, fontWeight: 600,
+      }}>
+        {typeConf.icon}
+      </span>
+      <span style={{ fontSize: 13, fontWeight: 500, color: '#262626' }}>{typeConf.label}</span>
     </div>
   );
 };
 
-// ─── 中间：可排序字段卡片 (预览态) ──────────────────
+/* ─── 中间：可排序字段卡片（旧版 .field-card-preview + .group-card 风格）─── */
 const SortableCanvasField = ({ field, isActive, onClick, onDelete }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: field.id,
     data: { isCanvasField: true, field }
   });
+
+  const [hovered, setHovered] = useState(false);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -83,38 +102,34 @@ const SortableCanvasField = ({ field, isActive, onClick, onDelete }) => {
     opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 100 : 'auto',
   };
-  const typeConf = TYPE_MAP[field.type] || { label: field.type, color: '#999', icon: '❓' };
+  const typeConf = TYPE_MAP[field.type] || { label: field.type, color: '#999', bg: '#f5f5f5', icon: '❓' };
 
   const renderFieldPreview = () => {
     switch (field.type) {
       case 'text':
-        if (field['x-component-props']?.rows) {
-          return <Input.TextArea placeholder="多行文本输入预览" rows={2} disabled />;
-        }
+        if (field['x-component-props']?.rows) return <Input.TextArea placeholder="多行文本输入预览" rows={2} disabled />;
         return <Input placeholder="文本输入预览" disabled />;
       case 'number':
         return <InputNumber placeholder="数字" style={{ width: '100%' }} disabled />;
       case 'date':
         return <DatePicker style={{ width: '100%' }} disabled />;
       case 'radio':
-        const rOpts = field.options && field.options.length > 0 ? field.options : ['选项1', '选项2'];
+        const rOpts = field.options?.length > 0 ? field.options : ['选项1', '选项2'];
         return <Radio.Group options={rOpts} disabled />;
       case 'checkbox':
-        const cOpts = field.options && field.options.length > 0 ? field.options : ['选项A', '选项B'];
+        const cOpts = field.options?.length > 0 ? field.options : ['选项A', '选项B'];
         return <Checkbox.Group options={cOpts} disabled />;
       case 'multirow':
         const subFields = field.sub_fields || [];
         return (
           <div style={{ border: '1px dashed #d9d9d9', borderRadius: 6, padding: 12, background: '#fcfcfc' }}>
-            <div style={{ marginBottom: 12, fontWeight: 500, color: '#595959', fontSize: 13 }}>一组数据 (多行子表预览)</div>
+            <div style={{ marginBottom: 10, fontWeight: 500, color: '#595959', fontSize: 12 }}>一组数据 (多行子表预览)</div>
             {subFields.length > 0 ? subFields.map((sf, idx) => (
-              <div key={idx} style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-                <div style={{ width: 100, textAlign: 'right', paddingRight: 12, fontSize: 13, color: '#595959', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div key={idx} style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+                <div style={{ width: 90, textAlign: 'right', paddingRight: 10, fontSize: 12, color: '#595959', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {sf.name || `子字段${idx + 1}`}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <Input size="small" placeholder="..." disabled />
-                </div>
+                <div style={{ flex: 1 }}><Input size="small" placeholder="..." disabled /></div>
               </div>
             )) : <div style={{ color: '#bfbfbf', textAlign: 'center', fontSize: 12 }}>暂无子字段定义</div>}
             <Button size="small" type="dashed" block style={{ marginTop: 8 }} disabled>+ 添加一行</Button>
@@ -122,21 +137,14 @@ const SortableCanvasField = ({ field, isActive, onClick, onDelete }) => {
         );
       case 'table':
         const columnsData = field.table_columns || [];
-        const displayColumns = columnsData.length > 0 
+        const displayColumns = columnsData.length > 0
           ? columnsData.map((col, idx) => ({ title: col.name || `列${idx + 1}`, dataIndex: `col${idx}` }))
           : [{ title: '列1', dataIndex: 'col1' }, { title: '列2', dataIndex: 'col2' }];
-        
         const mockData = { key: 1 };
-        displayColumns.forEach(c => { mockData[c.dataIndex] = '...' });
-
+        displayColumns.forEach(c => { mockData[c.dataIndex] = '—'; });
         return (
-          <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: 8, background: '#fafafa', overflowX: 'auto' }}>
-            <Table 
-              size="small" 
-              columns={displayColumns}
-              dataSource={[mockData]}
-              pagination={false}
-            />
+          <div style={{ overflowX: 'auto' }}>
+            <Table size="small" columns={displayColumns} dataSource={[mockData]} pagination={false} />
           </div>
         );
       default:
@@ -145,84 +153,255 @@ const SortableCanvasField = ({ field, isActive, onClick, onDelete }) => {
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes}>
-      <Card
-        size="small"
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div style={{
+        background: '#fff',
+        marginBottom: 12,
+        cursor: 'pointer',
+        borderRadius: 8,
+        border: isActive ? `2px solid #1890ff` : `1px solid ${hovered ? '#e0e0e0' : '#f0f0f0'}`,
+        borderLeft: `4px solid ${typeConf.color}`,
+        boxShadow: isDragging
+          ? '0 8px 24px rgba(0,0,0,0.12)'
+          : hovered
+          ? '0 4px 12px rgba(0,0,0,0.10)'
+          : '0 1px 3px rgba(0,0,0,0.06)',
+        background: isActive ? '#f0f7ff' : '#fff',
+        transition: 'all 0.18s ease',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
         onClick={onClick}
-        style={{
-          borderRadius: 8,
-          marginBottom: 12,
-          cursor: 'pointer',
-          border: isActive ? '1.5px solid #7c6fcd' : '1px solid transparent',
-          borderLeft: `4px solid ${typeConf.color}`,
-          background: isActive ? '#faf8ff' : '#fff',
-          boxShadow: isDragging ? '0 8px 24px rgba(0,0,0,.12)' : '0 1px 4px rgba(0,0,0,.04)',
-          position: 'relative'
-        }}
-        bodyStyle={{ padding: '12px 16px' }}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          <span {...listeners} style={{ cursor: 'grab', color: '#bfbfbf', fontSize: 16, marginTop: 4 }}>
-            <HolderOutlined />
-          </span>
-
-          <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>
-                {field.name || '未命名字段'}
-                {field.required && <span style={{ color: '#ff4d4f', marginLeft: 4 }}>*</span>}
-              </span>
-              <Tag color={typeConf.color} style={{ borderRadius: 12, fontSize: 10, margin: 0, padding: '0 6px' }}>
-                {typeConf.icon} {typeConf.label}
-              </Tag>
-            </div>
-            {field.prompt && (
-              <div style={{ fontSize: 12, color: '#8c8c8c', background: '#f5f5f5', padding: '4px 8px', borderRadius: 4, marginBottom: 8 }}>
-                提示词：{field.prompt}
-              </div>
-            )}
-            
-            <div style={{ marginTop: 4, pointerEvents: 'none' /* Disable interaction since it is a preview */ }}>
-              {renderFieldPreview()}
-            </div>
+        {/* 卡片头 */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 16px 10px',
+          borderBottom: `1px solid ${hovered || isActive ? '#f0f0f0' : 'transparent'}`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+            {/* 拖拽把手 */}
+            <span
+              {...listeners}
+              style={{ cursor: 'grab', color: '#c0c0c0', fontSize: 15, flexShrink: 0 }}
+              title="拖拽排序"
+            >
+              <HolderOutlined />
+            </span>
+            <span style={{
+              fontSize: 11, fontWeight: 600, padding: '1px 6px', borderRadius: 10,
+              background: typeConf.bg, color: typeConf.color, flexShrink: 0,
+            }}>
+              {typeConf.icon} {typeConf.label}
+            </span>
+            <span style={{ fontWeight: 600, fontSize: 14, color: '#262626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {field.name || '未命名字段'}
+              {field.required && <span style={{ color: '#ff4d4f', marginLeft: 4, fontSize: 13 }}>*</span>}
+            </span>
           </div>
-
-          <Popconfirm title="删除此字段？" onConfirm={(e) => { e.stopPropagation(); onDelete(); }} okText="删除" cancelText="取消">
-            <Button type="text" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+          <Popconfirm
+            title="确认删除该字段？"
+            onConfirm={e => { e?.stopPropagation(); onDelete(); }}
+            okText="删除" cancelText="取消"
+          >
+            <Button
+              type="text" danger size="small"
+              icon={<DeleteOutlined />}
+              style={{ opacity: hovered ? 1 : 0, transition: 'opacity 0.2s', flexShrink: 0 }}
+              onClick={e => e.stopPropagation()}
+            />
           </Popconfirm>
         </div>
-      </Card>
+
+        {/* 提示词 */}
+        {field.prompt && (
+          <div style={{ padding: '6px 16px 0', fontSize: 11, color: '#8c8c8c' }}>
+            <span style={{ background: '#f5f5f5', padding: '2px 8px', borderRadius: 4, display: 'inline-block' }}>
+              提示词：{field.prompt}
+            </span>
+          </div>
+        )}
+
+        {/* 字段预览 */}
+        <div style={{ padding: '10px 16px 14px', pointerEvents: 'none' }}>
+          {renderFieldPreview()}
+        </div>
+      </div>
     </div>
   );
 };
 
-// ─── 主界面 ──────────────────────────────────
+/* ─── 分组标签（右侧配置面板 section 分割）─── */
+const ConfigSection = ({ title, children }) => (
+  <div style={{ marginBottom: 20 }}>
+    <div style={{
+      fontSize: 12, fontWeight: 600, color: '#8c8c8c',
+      textTransform: 'uppercase', letterSpacing: '0.05em',
+      marginBottom: 10, paddingBottom: 6,
+      borderBottom: '1px solid #f0f0f0',
+    }}>
+      {title}
+    </div>
+    {children}
+  </div>
+);
+
+/* ─── 配置行 ─── */
+const ConfigRow = ({ label, children }) => (
+  <div style={{ marginBottom: 14 }}>
+    <div style={{ fontSize: 12.5, fontWeight: 500, color: '#595959', marginBottom: 6 }}>{label}</div>
+    {children}
+  </div>
+);
+
+/* ─── 左侧：可排序表单卡片 ─── */
+const SortableForm = ({ form, categoryId, isActive, onClick, onDelete }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: form.id,
+    data: { isForm: true, form, categoryId }
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      onClick={onClick}
+      style={{
+        ...style,
+        display: 'flex', alignItems: 'center',
+        padding: '5px 8px', borderRadius: 4, cursor: 'pointer',
+        background: isActive ? '#e6f4ff' : 'transparent',
+        color: isActive ? '#1677ff' : '#595959',
+        borderLeft: isActive ? '3px solid #1677ff' : '3px solid transparent',
+        transition: 'all 0.15s',
+        marginTop: 2
+      }}
+      onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = '#f5f5f5'; }}
+      onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+    >
+      <span {...listeners} {...attributes} style={{ cursor: 'grab', marginRight: 6, color: '#bfbfbf', flexShrink: 0, display: 'flex', alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+         <HolderOutlined />
+      </span>
+      <FileTextOutlined style={{ marginRight: 6, fontSize: 12 }} />
+      <span style={{ flex: 1, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {form.name}
+      </span>
+      <Popconfirm title="删除表单？" onConfirm={(e) => { e?.stopPropagation(); onDelete(); }} okText="删除" cancelText="取消">
+        <Button
+          type="text" size="small" danger icon={<DeleteOutlined />} onClick={e => e.stopPropagation()}
+          style={{ opacity: 0.5, fontSize: 10, padding: '0 2px' }}
+          onMouseEnter={e => e.currentTarget.style.opacity = 1}
+          onMouseLeave={e => e.currentTarget.style.opacity = 0.5}
+        />
+      </Popconfirm>
+    </div>
+  );
+};
+
+/* ─── 左侧：可排序分类卡片 ─── */
+const SortableCategory = ({ category, isExpanded, onToggleExpand, activeFormId, onSelectForm, onDeleteForm, onAddForm, onRename, onDeleteCategory }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: category.id,
+    data: { isCategory: true, category }
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : 1,
+    zIndex: isDragging ? 10 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={{ ...style, marginBottom: 6 }}>
+      {/* 分类行 */}
+      <div
+        style={{
+          display: 'flex', alignItems: 'center',
+          padding: '5px 8px', background: '#f0f0f0',
+          borderRadius: 4, cursor: 'pointer',
+        }}
+        onClick={onToggleExpand}
+      >
+        <span {...listeners} {...attributes} style={{ cursor: 'grab', marginRight: 6, color: '#bfbfbf', flexShrink: 0, display: 'flex', alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+          <HolderOutlined />
+        </span>
+        <FolderOpenOutlined style={{ color: '#faad14', marginRight: 6, fontSize: 13 }} />
+        <span style={{ flex: 1, fontWeight: 600, fontSize: 12.5, color: '#262626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {category.name}
+        </span>
+        <Space size={2} onClick={e => e.stopPropagation()}>
+          <Tooltip title="添加表单">
+            <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => onAddForm(category.id)} style={{ fontSize: 11 }} />
+          </Tooltip>
+          <Tooltip title="重命名">
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => onRename(category.id)} style={{ fontSize: 11 }} />
+          </Tooltip>
+          <Tooltip title="删除分类">
+            <Popconfirm title="确认删除整个分类？" onConfirm={() => onDeleteCategory(category.id)} okText="删除" cancelText="取消">
+              <Button type="text" size="small" danger icon={<DeleteOutlined />} style={{ fontSize: 11 }} />
+            </Popconfirm>
+          </Tooltip>
+        </Space>
+      </div>
+
+      {/* 表单列表 */}
+      {isExpanded && (
+        <div style={{ paddingLeft: 10, marginTop: 2 }}>
+          <SortableContext items={category.forms.map(f => f.id)} strategy={verticalListSortingStrategy}>
+            {category.forms.map(f => (
+              <SortableForm 
+                 key={f.id} form={f} categoryId={category.id} 
+                 isActive={activeFormId === f.id} 
+                 onClick={() => onSelectForm(f.id, category.id)}
+                 onDelete={() => onDeleteForm(category.id, f.id)} 
+              />
+            ))}
+          </SortableContext>
+          {category.forms.length === 0 && (
+            <div style={{ color: '#bfbfbf', fontSize: 12, padding: '4px 8px' }}>暂无表单，点击上方 + 新建</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─── 主界面 ─── */
 const CrfDesigner = () => {
   const navigate = useNavigate();
   const { templateId } = useParams();
   const isEditMode = !!templateId;
 
-  // ─── 状态管理 ───
   const [templateName, setTemplateName] = useState('');
   const [templateDesc, setTemplateDesc] = useState('');
   const [templateCategory, setTemplateCategory] = useState('');
   const [categories, setCategories] = useState([]);
 
-  // 选中状态
   const [activeFormId, setActiveFormId] = useState(null);
   const [activeFieldId, setActiveFieldId] = useState(null);
 
-  // Tab 状态
-  const [leftTab, setLeftTab] = useState('tree'); // tree | components
-  const [rightTab, setRightTab] = useState('form'); // form | field
+  const [leftTab, setLeftTab] = useState('tree');
+  const [rightTab, setRightTab] = useState('form');
 
-  // 拖拽 overlay 状态
   const [activeDragItem, setActiveDragItem] = useState(null);
-
   const [saving, setSaving] = useState(false);
   const [, setLoading] = useState(isEditMode);
 
-  // ─── 加载数据 ───
+  // 树节点展开状态
+  const [expandedCats, setExpandedCats] = useState({});
+
   useEffect(() => {
     const fetchTemplate = async () => {
       if (!isEditMode) return;
@@ -233,9 +412,8 @@ const CrfDesigner = () => {
           setTemplateName(tpl.template_name || '');
           setTemplateDesc(tpl.description || '');
           setTemplateCategory(tpl.category || '');
-
-          if (tpl.schema_json && tpl.schema_json.categories) {
-            const loadedCats = tpl.schema_json.categories.map(cat => ({
+          if (tpl.schema_json?.categories) {
+            const loaded = tpl.schema_json.categories.map(cat => ({
               id: nextId('cat'), name: cat.name,
               forms: cat.forms.map(f => ({
                 id: nextId('form'), name: f.name, prompt: f.prompt || '',
@@ -248,9 +426,13 @@ const CrfDesigner = () => {
                 }))
               }))
             }));
-            setCategories(loadedCats);
-            if (loadedCats.length > 0 && loadedCats[0].forms.length > 0) {
-              setActiveFormId(loadedCats[0].forms[0].id);
+            setCategories(loaded);
+            // 默认展开所有分类
+            const expanded = {};
+            loaded.forEach(c => { expanded[c.id] = true; });
+            setExpandedCats(expanded);
+            if (loaded.length > 0 && loaded[0].forms.length > 0) {
+              setActiveFormId(loaded[0].forms[0].id);
             }
           }
         }
@@ -263,7 +445,6 @@ const CrfDesigner = () => {
     fetchTemplate();
   }, [templateId, isEditMode]);
 
-  // ─── 工具函数 ───
   const getActiveForm = useCallback(() => {
     if (!activeFormId) return null;
     for (const cat of categories) {
@@ -283,19 +464,19 @@ const CrfDesigner = () => {
   const updateActiveField = (updates) => {
     const form = getActiveForm();
     if (!form || !activeFieldId) return;
-    updateActiveForm({
-      fields: form.fields.map(f => f.id === activeFieldId ? { ...f, ...updates } : f)
-    });
+    updateActiveForm({ fields: form.fields.map(f => f.id === activeFieldId ? { ...f, ...updates } : f) });
   };
 
   const activeForm = getActiveForm();
   const activeField = activeForm?.fields.find(f => f.id === activeFieldId);
 
-  // ─── 树结构操作 ───
+  // ─── 树操作 ───
   const addCategory = () => {
     const name = prompt('分类名称');
     if (!name) return;
-    setCategories(prev => [...prev, { id: nextId('cat'), name, forms: [] }]);
+    const cat = { id: nextId('cat'), name, forms: [] };
+    setCategories(prev => [...prev, cat]);
+    setExpandedCats(prev => ({ ...prev, [cat.id]: true }));
   };
   const renameCategory = (catId) => {
     const cat = categories.find(c => c.id === catId);
@@ -319,69 +500,105 @@ const CrfDesigner = () => {
     setActiveFormId(newForm.id);
     setActiveFieldId(null);
     setRightTab('form');
+    setExpandedCats(prev => ({ ...prev, [catId]: true }));
   };
   const deleteForm = (catId, formId) => {
     setCategories(prev => prev.map(c => c.id === catId ? { ...c, forms: c.forms.filter(f => f.id !== formId) } : c));
-    if (activeFormId === formId) {
-      setActiveFormId(null);
-      setActiveFieldId(null);
-      setRightTab('form');
-    }
+    if (activeFormId === formId) { setActiveFormId(null); setActiveFieldId(null); setRightTab('form'); }
   };
 
-  // ─── 拖拽事件处理 (@dnd-kit) ───
+  // ─── 拖拽 ───
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor)
   );
 
-  const handleDragStart = (event) => {
-    const { active } = event;
-    setActiveDragItem(active);
-  };
+  const handleDragStart = (event) => setActiveDragItem(event.active);
 
   const handleDragEnd = (event) => {
     const { active, over } = event;
     setActiveDragItem(null);
+    if (!over) return;
 
-    if (!over || !activeForm) return;
+    if (active.data.current?.isCategory && over.data.current?.isCategory) {
+      if (active.id !== over.id) {
+        setCategories(prev => {
+          const oldIndex = prev.findIndex(c => c.id === active.id);
+          const newIndex = prev.findIndex(c => c.id === over.id);
+          return arrayMove(prev, oldIndex, newIndex);
+        });
+      }
+      return;
+    }
 
-    // 1. 从组件库拖入新组件到画布
+    if (active.data.current?.isForm && over.data.current?.isForm) {
+      if (active.id !== over.id) {
+        const activeCatId = active.data.current.categoryId;
+        const overCatId = over.data.current.categoryId;
+        if (activeCatId === overCatId) {
+          setCategories(prev => prev.map(c => {
+            if (c.id === activeCatId) {
+              const oldIndex = c.forms.findIndex(f => f.id === active.id);
+              const newIndex = c.forms.findIndex(f => f.id === over.id);
+              return { ...c, forms: arrayMove(c.forms, oldIndex, newIndex) };
+            }
+            return c;
+          }));
+        } else {
+          // move across categories
+          let draggedForm = null;
+          setCategories(prev => {
+            const newCats = [...prev];
+            const sourceCatIdx = newCats.findIndex(c => c.id === activeCatId);
+            if (sourceCatIdx === -1) return prev;
+            const formIdx = newCats[sourceCatIdx].forms.findIndex(f => f.id === active.id);
+            if (formIdx === -1) return prev;
+            
+            draggedForm = newCats[sourceCatIdx].forms[formIdx];
+            newCats[sourceCatIdx] = { ...newCats[sourceCatIdx], forms: newCats[sourceCatIdx].forms.filter(f => f.id !== active.id) };
+
+            const targetCatIdx = newCats.findIndex(c => c.id === overCatId);
+            if (targetCatIdx === -1) return newCats;
+            
+            const targetFormIdx = newCats[targetCatIdx].forms.findIndex(f => f.id === over.id);
+            const newForms = [...newCats[targetCatIdx].forms];
+            newForms.splice(targetFormIdx >= 0 ? targetFormIdx : newForms.length, 0, draggedForm);
+            newCats[targetCatIdx] = { ...newCats[targetCatIdx], forms: newForms };
+            return newCats;
+          });
+        }
+      }
+      return;
+    }
+
+    if (!activeForm) return;
+
     if (active.data.current?.isNewComponent) {
       const type = active.data.current.type;
       const newField = {
         id: nextId('field'), name: `新建${TYPE_MAP[type].label}字段`, type, required: false,
         prompt: '', options: [], sub_fields: [], table_columns: []
       };
-
       let newFields = [...activeForm.fields];
-
       if (over.id === 'canvas-droppable-area') {
-        // 拖到空白区域末尾
         newFields.push(newField);
-      } else {
-        // 拖到某个现有字段上方/下方
+      } else if (over.data.current?.isCanvasField) {
         const overIndex = activeForm.fields.findIndex(f => f.id === over.id);
-        if (overIndex >= 0) {
-          // 简单处理：插入到目标位置
-          newFields.splice(overIndex, 0, newField);
-        } else {
-          newFields.push(newField);
-        }
+        newFields.splice(overIndex >= 0 ? overIndex : newFields.length, 0, newField);
       }
-
       updateActiveForm({ fields: newFields });
       setActiveFieldId(newField.id);
-      setRightTab('field'); // 自动切换到字段配置
+      setRightTab('field');
       return;
     }
 
-    // 2. 画布内部排序
-    if (active.id !== over.id) {
-      const oldIdx = activeForm.fields.findIndex(f => f.id === active.id);
-      const newIdx = activeForm.fields.findIndex(f => f.id === over.id);
-      if (oldIdx >= 0 && newIdx >= 0) {
-        updateActiveForm({ fields: arrayMove(activeForm.fields, oldIdx, newIdx) });
+    if (active.data.current?.isCanvasField && over.data.current?.isCanvasField) {
+      if (active.id !== over.id) {
+        const oldIdx = activeForm.fields.findIndex(f => f.id === active.id);
+        const newIdx = activeForm.fields.findIndex(f => f.id === over.id);
+        if (oldIdx >= 0 && newIdx >= 0) {
+          updateActiveForm({ fields: arrayMove(activeForm.fields, oldIdx, newIdx) });
+        }
       }
     }
   };
@@ -407,17 +624,14 @@ const CrfDesigner = () => {
           }))
         }))
       };
-
       if (isEditMode) {
         const res = await api.put(`/crf-templates/${templateId}`, {
-          template_name: templateName, description: templateDesc,
-          category: templateCategory, schema_json: schemaJson,
+          template_name: templateName, description: templateDesc, category: templateCategory, schema_json: schemaJson,
         });
         if (res?.success) message.success('模版已更新');
       } else {
         const res = await api.post('/crf-templates/', {
-          template_name: templateName, description: templateDesc,
-          category: templateCategory, schema_json: schemaJson,
+          template_name: templateName, description: templateDesc, category: templateCategory, schema_json: schemaJson,
         });
         if (res?.success) { message.success('模版创建成功'); navigate('/projects'); }
         else message.error(res?.message || '创建失败');
@@ -430,23 +644,48 @@ const CrfDesigner = () => {
   };
 
   return (
-    <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
-      {/* ─── 顶部工具栏 ─── */}
+    <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', background: '#f5f6fa' }}>
+
+      {/* ─── 顶部工具栏（仿旧版 DesignerPageFrame Card）─── */}
       <div style={{
-        padding: '12px 24px', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: 16,
-        background: '#fff'
+        padding: '10px 20px',
+        borderBottom: '1px solid #e8e8e8',
+        background: '#fff',
+        display: 'flex', alignItems: 'center', gap: 12,
+        flexShrink: 0,
+        boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
       }}>
-        <Button icon={<ArrowLeftOutlined />} type="text" onClick={() => navigate('/projects')}>返回</Button>
-        <Divider type="vertical" />
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/projects')} style={{ borderRadius: 6 }}>
+          返回CRF模版
+        </Button>
+        <Divider type="vertical" style={{ height: 20 }} />
         <Input
-          value={templateName} onChange={(e) => setTemplateName(e.target.value)}
-          placeholder="未命名 CRF 模版" variant="borderless"
-          style={{ fontSize: 18, fontWeight: 600, maxWidth: 300, padding: 0 }}
+          value={templateName}
+          onChange={e => setTemplateName(e.target.value)}
+          placeholder="未命名 CRF 模版"
+          variant="borderless"
+          style={{ fontSize: 16, fontWeight: 600, maxWidth: 280, padding: 0, color: '#1f1f1f' }}
         />
-        <Tag color="purple" style={{ borderRadius: 12 }}>{isEditMode ? '编辑模式' : '新建模式'}</Tag>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' }}>
-          <Input placeholder="分类标签" value={templateCategory} onChange={(e) => setTemplateCategory(e.target.value)} size="small" style={{ width: 120 }} />
-          <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave} style={{ borderRadius: 6 }}>
+        <Tag color={isEditMode ? 'blue' : 'green'} style={{ borderRadius: 12, fontWeight: 500 }}>
+          {isEditMode ? '编辑模式' : '新建模式'}
+        </Tag>
+
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <Input
+            placeholder="分类标签"
+            value={templateCategory}
+            onChange={e => setTemplateCategory(e.target.value)}
+            size="small"
+            style={{ width: 120, borderRadius: 6 }}
+            prefix={<BranchesOutlined style={{ color: '#bfbfbf' }} />}
+          />
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={saving}
+            onClick={handleSave}
+            style={{ borderRadius: 6 }}
+          >
             保存模版
           </Button>
         </div>
@@ -454,101 +693,163 @@ const CrfDesigner = () => {
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
         {/* ─── 主体三栏布局 ─── */}
-        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', background: '#f5f5f5' }}>
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-          {/* 🟢 左栏：树组 / 组件库 */}
-          <div style={{ width: 280, background: '#fff', borderRight: '1px solid #e8e8e8', display: 'flex', flexDirection: 'column' }}>
-            <Tabs
-              activeKey={leftTab} onChange={setLeftTab}
-              centered
-              items={[
-                { key: 'tree', label: <span><FolderOpenOutlined /> 表单结构</span> },
-                { key: 'components', label: <span><AppstoreOutlined /> 组件库</span> }
-              ]}
-              style={{ padding: '0 16px' }}
-            />
+          {/* 🟢 左栏：结构树 / 组件库（旧版 left-panel + left-panel-tabs 样式）*/}
+          <div style={{
+            width: 260,
+            background: '#fafafa',
+            borderRight: '1px solid #e8e8e8',
+            display: 'flex', flexDirection: 'column',
+            flexShrink: 0,
+          }}>
+            {/* 标签切换 */}
+            <div style={{
+              display: 'flex',
+              borderBottom: '1px solid #e8e8e8',
+              background: '#f5f5f5',
+              padding: '0 8px',
+              flexShrink: 0,
+            }}>
+              {[
+                { key: 'tree', label: '表单结构', icon: <FolderOpenOutlined /> },
+                { key: 'components', label: '组件库', icon: <AppstoreOutlined /> },
+              ].map(tab => (
+                <div
+                  key={tab.key}
+                  onClick={() => setLeftTab(tab.key)}
+                  style={{
+                    flex: 1, padding: '10px 8px', textAlign: 'center',
+                    fontSize: 12.5, fontWeight: leftTab === tab.key ? 600 : 400,
+                    color: leftTab === tab.key ? '#1677ff' : '#595959',
+                    borderBottom: leftTab === tab.key ? '2px solid #1677ff' : '2px solid transparent',
+                    cursor: 'pointer', transition: 'all 0.2s',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                  }}
+                >
+                  {tab.icon} {tab.label}
+                </div>
+              ))}
+            </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 16px' }}>
+            {/* 内容区 */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
               {leftTab === 'tree' ? (
                 <>
-                  <Button type="dashed" block icon={<PlusOutlined />} onClick={addCategory} style={{ marginBottom: 16 }}>新建分类</Button>
-                  {categories.map(cat => (
-                    <div key={cat.id} style={{ marginBottom: 12 }}>
-                      {/* 分类头 */}
-                      <div style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', background: '#fafbfc', borderRadius: 4 }}>
-                        <FolderOpenOutlined style={{ color: '#faad14', marginRight: 8 }} />
-                        <span style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>{cat.name}</span>
-                        <Space size={2}>
-                          <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addForm(cat.id)} title="添加表单" />
-                          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => renameCategory(cat.id)} title="重命名" />
-                          <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => deleteCategory(cat.id)} title="删除" />
-                        </Space>
-                      </div>
-                      {/* 表单列表 */}
-                      <div style={{ paddingLeft: 12, marginTop: 4 }}>
-                        {cat.forms.map(f => (
-                          <div
-                            key={f.id}
-                            onClick={() => { setActiveFormId(f.id); setActiveFieldId(null); setRightTab('form'); setLeftTab('components'); }}
-                            style={{
-                              display: 'flex', alignItems: 'center', padding: '6px 8px', cursor: 'pointer', borderRadius: 4,
-                              background: activeFormId === f.id ? '#e6f4ff' : 'transparent',
-                              color: activeFormId === f.id ? '#1677ff' : '#595959',
-                              transition: 'all 0.2s'
-                            }}
-                          >
-                            <FileTextOutlined style={{ marginRight: 8 }} />
-                            <span style={{ flex: 1, fontSize: 13 }}>{f.name}</span>
-                            <Popconfirm title="确定删除表单？" onConfirm={(e) => { e.stopPropagation(); deleteForm(cat.id, f.id); }}>
-                              <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={e => e.stopPropagation()} />
-                            </Popconfirm>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+                  <Button
+                    type="dashed" block icon={<PlusOutlined />}
+                    onClick={addCategory}
+                    style={{ marginBottom: 12, borderRadius: 6, fontSize: 12.5 }}
+                  >
+                    新建分类
+                  </Button>
+
+                  {categories.length === 0 && (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无分类" style={{ padding: '24px 0' }} />
+                  )}
+
+                  <SortableContext items={categories.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                    {categories.map(cat => (
+                      <SortableCategory
+                        key={cat.id}
+                        category={cat}
+                        isExpanded={expandedCats[cat.id] !== false}
+                        onToggleExpand={() => setExpandedCats(prev => ({ ...prev, [cat.id]: !(expandedCats[cat.id] !== false) }))}
+                        activeFormId={activeFormId}
+                        onSelectForm={(fId, catId) => {
+                          setActiveFormId(fId);
+                          setActiveFieldId(null);
+                          setRightTab('form');
+                          setLeftTab('components');
+                        }}
+                        onDeleteForm={(catId, fId) => deleteForm(catId, fId)}
+                        onAddForm={addForm}
+                        onRename={renameCategory}
+                        onDeleteCategory={deleteCategory}
+                      />
+                    ))}
+                  </SortableContext>
                 </>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  {FIELD_TYPES.map(typeConf => (
-                    <DraggableComponent key={typeConf.value} typeConf={typeConf} />
-                  ))}
+                /* 组件库 */
+                <div>
+                  <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    字段类型（拖拽到画布）
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {FIELD_TYPES.map(typeConf => (
+                      <DraggableComponent key={typeConf.value} typeConf={typeConf} />
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* 🟡 中栏：画布容器 */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: 24, display: 'flex', justifyContent: 'center' }}>
+          {/* 🟡 中栏：画布容器（旧版 .design-canvas + .group-card 风格）*/}
+          <div style={{ flex: 1, overflowY: 'auto', padding: 24, background: '#f5f6fa' }}>
             {!activeForm ? (
-              <Empty
-                description="请在左侧选择或创建一个表单"
-                style={{ marginTop: 100 }}
-              />
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 400 }}>
+                <Empty
+                  description={
+                    <span style={{ color: '#8c8c8c' }}>
+                      请在左侧选择或创建一个表单，<br />然后从组件库拖拽字段到画布
+                    </span>
+                  }
+                />
+              </div>
             ) : (
-              <div style={{ width: '100%', maxWidth: 700 }}>
-                <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <Title level={4} style={{ margin: 0, color: '#262626' }}>{activeForm.name}</Title>
-                  <Tag color="cyan">{activeForm.row_type === 'single_row' ? '不可重复' : '可重复'}</Tag>
+              <div style={{ maxWidth: 760, margin: '0 auto' }}>
+                {/* 表单头卡片（旧版 .group-card .group-header 风格）*/}
+                <div style={{
+                  background: '#fff',
+                  borderRadius: 8,
+                  marginBottom: 16,
+                  overflow: 'hidden',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '14px 20px',
+                    borderBottom: '2px solid #1890ff',
+                    background: 'linear-gradient(to right, #f0f7ff, #fff)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <FormOutlined style={{ color: '#1890ff', fontSize: 18 }} />
+                      <span style={{ fontSize: 16, fontWeight: 600, color: '#262626' }}>{activeForm.name}</span>
+                      <Tag color={activeForm.row_type === 'multi_row' ? 'orange' : 'blue'} style={{ borderRadius: 10, fontSize: 11 }}>
+                        {activeForm.row_type === 'multi_row' ? '可重复' : '不可重复'}
+                      </Tag>
+                    </div>
+                    <span style={{ fontSize: 12, color: '#8c8c8c' }}>
+                      {activeForm.fields.length} 个字段
+                    </span>
+                  </div>
                 </div>
 
+                {/* 字段画布 */}
                 <div
                   id="canvas-droppable-area"
                   style={{
-                    minHeight: 400,
-                    padding: '16px',
-                    background: '#fafafa',
+                    minHeight: 300,
+                    padding: 16,
+                    background: '#fff',
                     border: '1px dashed #d9d9d9',
                     borderRadius: 8,
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
                   }}
                 >
                   <SortableContext items={activeForm.fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
                     {activeForm.fields.length === 0 ? (
-                      <div style={{ textAlign: 'center', color: '#bfbfbf', padding: '60px 0' }}>
-                        从左侧组件库拖拽组件到此处
+                      <div style={{
+                        textAlign: 'center', color: '#bfbfbf', padding: '60px 0', fontSize: 14,
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
+                      }}>
+                        <AppstoreOutlined style={{ fontSize: 40, opacity: 0.3 }} />
+                        <span>从左侧组件库拖拽字段到此处</span>
                       </div>
                     ) : (
-                      activeForm.fields.map((field) => (
+                      activeForm.fields.map(field => (
                         <SortableCanvasField
                           key={field.id}
                           field={field}
@@ -568,149 +869,254 @@ const CrfDesigner = () => {
           </div>
 
           {/* 🔴 右栏：属性配置面板 */}
-          <div style={{ width: 320, background: '#fff', borderLeft: '1px solid #e8e8e8', display: 'flex', flexDirection: 'column' }}>
-            <Tabs
-              activeKey={rightTab} onChange={setRightTab}
-              centered
-              items={[
-                { key: 'form', label: <span><SettingOutlined /> 表单属性</span>, disabled: !activeFormId },
-                { key: 'field', label: <span><FormOutlined /> 字段属性</span>, disabled: !activeFieldId }
-              ]}
-              style={{ padding: '0 16px' }}
-            />
+          <div style={{
+            width: 300,
+            background: '#fafafa',
+            borderLeft: '1px solid #e8e8e8',
+            display: 'flex', flexDirection: 'column',
+            flexShrink: 0,
+          }}>
+            {/* 标签切换 */}
+            <div style={{
+              display: 'flex',
+              borderBottom: '1px solid #e8e8e8',
+              background: '#f5f5f5',
+              padding: '0 8px',
+              flexShrink: 0,
+            }}>
+              {[
+                { key: 'form', label: '表单属性', icon: <SettingOutlined />, disabled: !activeFormId },
+                { key: 'field', label: '字段属性', icon: <FormOutlined />, disabled: !activeFieldId },
+              ].map(tab => (
+                <div
+                  key={tab.key}
+                  onClick={() => !tab.disabled && setRightTab(tab.key)}
+                  style={{
+                    flex: 1, padding: '10px 8px', textAlign: 'center',
+                    fontSize: 12.5, fontWeight: rightTab === tab.key ? 600 : 400,
+                    color: tab.disabled ? '#c0c0c0' : rightTab === tab.key ? '#1677ff' : '#595959',
+                    borderBottom: rightTab === tab.key ? '2px solid #1677ff' : '2px solid transparent',
+                    cursor: tab.disabled ? 'not-allowed' : 'pointer', transition: 'all 0.2s',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                  }}
+                >
+                  {tab.icon} {tab.label}
+                </div>
+              ))}
+            </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 20px' }}>
-              {rightTab === 'form' && activeForm && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <div>
-                    <Text strong style={{ fontSize: 13 }}>表单名称</Text>
-                    <Input value={activeForm.name} onChange={e => updateActiveForm({ name: e.target.value })} style={{ marginTop: 8 }} />
-                  </div>
-                  <div>
-                    <Text strong style={{ fontSize: 13 }}>提取提示词 (Prompt)</Text>
-                    <Input.TextArea rows={4} value={activeForm.prompt} onChange={e => updateActiveForm({ prompt: e.target.value })}
-                      placeholder="指导 AI 如何从病历中提取整表数据" style={{ marginTop: 8 }} />
-                  </div>
-                  <div>
-                    <Text strong style={{ fontSize: 13 }}>表单重复类型</Text>
-                    <Select value={activeForm.row_type} onChange={v => updateActiveForm({ row_type: v })} style={{ width: '100%', marginTop: 8 }}
-                      options={[{ value: 'single_row', label: '不可重复' }, { value: 'multi_row', label: '可重复' }]} />
-                  </div>
-                  <div>
-                    <Text strong style={{ fontSize: 13 }}>冲突合并策略</Text>
-                    <Select value={activeForm.conflict_strategy} onChange={v => updateActiveForm({ conflict_strategy: v })} style={{ width: '100%', marginTop: 8 }}
-                      options={[{ value: 'fill_blank', label: '填空不覆盖' }, { value: 'latest_wins', label: '新值覆盖旧值' }, { value: 'manual', label: '抛出冲突人工处理' }]} />
-                  </div>
-                  {activeForm.row_type === 'multi_row' && (
-                    <div>
-                      <Text strong style={{ fontSize: 13 }}>锚点字段 (去重主键)</Text>
-                      <Select mode="multiple" value={activeForm.anchor_fields} onChange={v => updateActiveForm({ anchor_fields: v })}
-                        style={{ width: '100%', marginTop: 8 }} placeholder="选择用于判断是否为同一条记录的字段"
-                        options={activeForm.fields.map(f => ({ value: f.name, label: f.name }))} />
-                    </div>
-                  )}
+            {/* 配置内容区 */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 20px' }}>
+              {/* 表单属性 */}
+              {rightTab === 'form' && activeForm ? (
+                <>
+                  <ConfigSection title="基础信息">
+                    <ConfigRow label="表单名称">
+                      <Input value={activeForm.name} onChange={e => updateActiveForm({ name: e.target.value })} size="small" style={{ borderRadius: 6 }} />
+                    </ConfigRow>
+                    <ConfigRow label="提取提示词 (Prompt)">
+                      <Input.TextArea
+                        rows={4} value={activeForm.prompt}
+                        onChange={e => updateActiveForm({ prompt: e.target.value })}
+                        placeholder="指导 AI 如何从病历中提取整表数据"
+                        size="small"
+                        style={{ borderRadius: 6, fontSize: 12.5 }}
+                      />
+                    </ConfigRow>
+                  </ConfigSection>
+
+                  <ConfigSection title="行为配置">
+                    <ConfigRow label="表单重复类型">
+                      <Select
+                        value={activeForm.row_type}
+                        onChange={v => updateActiveForm({ row_type: v })}
+                        style={{ width: '100%' }} size="small"
+                        options={[{ value: 'single_row', label: '不可重复' }, { value: 'multi_row', label: '可重复' }]}
+                      />
+                    </ConfigRow>
+                    <ConfigRow label="冲突合并策略">
+                      <Select
+                        value={activeForm.conflict_strategy}
+                        onChange={v => updateActiveForm({ conflict_strategy: v })}
+                        style={{ width: '100%' }} size="small"
+                        options={[
+                          { value: 'fill_blank', label: '填空不覆盖' },
+                          { value: 'latest_wins', label: '新值覆盖旧值' },
+                          { value: 'manual', label: '人工处理冲突' }
+                        ]}
+                      />
+                    </ConfigRow>
+                    {activeForm.row_type === 'multi_row' && (
+                      <ConfigRow label="锚点字段 (去重主键)">
+                        <Select
+                          mode="multiple" value={activeForm.anchor_fields}
+                          onChange={v => updateActiveForm({ anchor_fields: v })}
+                          style={{ width: '100%' }} size="small"
+                          placeholder="选择用于判断是否为同一记录的字段"
+                          options={activeForm.fields.map(f => ({ value: f.name, label: f.name }))}
+                        />
+                      </ConfigRow>
+                    )}
+                  </ConfigSection>
+                </>
+              ) : rightTab === 'form' && (
+                <div style={{ textAlign: 'center', padding: '40px 0', color: '#bfbfbf', fontSize: 13 }}>
+                  <SettingOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
+                  请先选择一个表单
                 </div>
               )}
 
-              {rightTab === 'field' && activeField && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <div>
-                    <Text strong style={{ fontSize: 13 }}>字段标题</Text>
-                    <Input value={activeField.name} onChange={e => updateActiveField({ name: e.target.value })} style={{ marginTop: 8 }} />
-                  </div>
+              {/* 字段属性 */}
+              {rightTab === 'field' && activeField ? (
+                <>
+                  <ConfigSection title="字段信息">
+                    <ConfigRow label="字段标题">
+                      <Input value={activeField.name} onChange={e => updateActiveField({ name: e.target.value })} size="small" style={{ borderRadius: 6 }} />
+                    </ConfigRow>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 500, color: '#595959' }}>是否必填</span>
+                      <Switch checked={activeField.required} onChange={v => updateActiveField({ required: v })} size="small" />
+                    </div>
+                    <ConfigRow label="字段类型">
+                      <Select
+                        value={activeField.type} disabled
+                        style={{ width: '100%' }} size="small"
+                      />
+                    </ConfigRow>
+                  </ConfigSection>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text strong style={{ fontSize: 13 }}>是否必填</Text>
-                    <Switch checked={activeField.required} onChange={v => updateActiveField({ required: v })} />
-                  </div>
+                  <ConfigSection title="提取配置">
+                    <ConfigRow label="字段提取指导 (Prompt)">
+                      <Input.TextArea
+                        rows={3} value={activeField.prompt}
+                        onChange={e => updateActiveField({ prompt: e.target.value })}
+                        placeholder="指导 AI 提取此字段的规则"
+                        size="small" style={{ borderRadius: 6, fontSize: 12.5 }}
+                      />
+                    </ConfigRow>
+                  </ConfigSection>
 
-                  <div>
-                    <Text strong style={{ fontSize: 13 }}>字段类型</Text>
-                    <Select value={activeField.type} disabled style={{ width: '100%', marginTop: 8 }} />
-                  </div>
-
-                  <div>
-                    <Text strong style={{ fontSize: 13 }}>字段提取指导 (Prompt)</Text>
-                    <Input.TextArea rows={3} value={activeField.prompt} onChange={e => updateActiveField({ prompt: e.target.value })}
-                      placeholder="指导 AI 提取此字段的规则" style={{ marginTop: 8 }} />
-                  </div>
-
-                  {/* 针对特定类型的扩展配置 */}
+                  {/* 类型专属配置 */}
                   {(activeField.type === 'radio' || activeField.type === 'checkbox') && (
-                    <div>
-                      <Text strong style={{ fontSize: 13 }}>选项列表</Text>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                    <ConfigSection title="选项配置">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {(activeField.options || []).map((opt, i) => (
-                          <Input key={i} size="small" value={opt}
-                            onChange={(e) => { const no = [...activeField.options]; no[i] = e.target.value; updateActiveField({ options: no }); }}
-                            addonAfter={<DeleteOutlined style={{ color: '#ff4d4f', cursor: 'pointer' }} onClick={() => {
-                              const no = [...activeField.options]; no.splice(i, 1); updateActiveField({ options: no });
-                            }} />}
+                          <Input
+                            key={i} size="small" value={opt}
+                            onChange={e => { const no = [...activeField.options]; no[i] = e.target.value; updateActiveField({ options: no }); }}
+                            style={{ borderRadius: 6 }}
+                            suffix={
+                              <DeleteOutlined
+                                style={{ color: '#ff4d4f', cursor: 'pointer', fontSize: 11 }}
+                                onClick={() => { const no = [...activeField.options]; no.splice(i, 1); updateActiveField({ options: no }); }}
+                              />
+                            }
                           />
                         ))}
-                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => updateActiveField({ options: [...(activeField.options || []), `选项${(activeField.options || []).length + 1}`] })}>添加选项</Button>
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} style={{ borderRadius: 6 }}
+                          onClick={() => updateActiveField({ options: [...(activeField.options || []), `选项${(activeField.options || []).length + 1}`] })}>
+                          添加选项
+                        </Button>
                       </div>
-                    </div>
+                    </ConfigSection>
                   )}
 
                   {activeField.type === 'multirow' && (
-                    <div>
-                      <Text strong style={{ fontSize: 13 }}>多行子字段</Text>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                    <ConfigSection title="多行子字段">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {(activeField.sub_fields || []).map((sf, i) => (
                           <div key={i} style={{ display: 'flex', gap: 4 }}>
-                            <Input size="small" value={sf.name} onChange={e => { const n = [...activeField.sub_fields]; n[i].name = e.target.value; updateActiveField({ sub_fields: n }); }} placeholder="子字段名" />
-                            <Select size="small" value={sf.type || 'text'} onChange={v => { const n = [...activeField.sub_fields]; n[i].type = v; updateActiveField({ sub_fields: n }); }} style={{ width: 100 }}
+                            <Input size="small" value={sf.name} style={{ borderRadius: 6 }}
+                              onChange={e => { const n = [...activeField.sub_fields]; n[i].name = e.target.value; updateActiveField({ sub_fields: n }); }}
+                              placeholder="子字段名" />
+                            <Select size="small" value={sf.type || 'text'} style={{ width: 80 }}
+                              onChange={v => { const n = [...activeField.sub_fields]; n[i].type = v; updateActiveField({ sub_fields: n }); }}
                               options={[{ value: 'text', label: '文本' }, { value: 'number', label: '数字' }, { value: 'date', label: '日期' }]} />
-                            <Button size="small" danger type="text" icon={<DeleteOutlined />} onClick={() => { const n = [...activeField.sub_fields]; n.splice(i, 1); updateActiveField({ sub_fields: n }); }} />
+                            <Button size="small" danger type="text" icon={<DeleteOutlined />}
+                              onClick={() => { const n = [...activeField.sub_fields]; n.splice(i, 1); updateActiveField({ sub_fields: n }); }} />
                           </div>
                         ))}
-                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => updateActiveField({ sub_fields: [...(activeField.sub_fields || []), { name: '', type: 'text' }] })}>添加子字段</Button>
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} style={{ borderRadius: 6 }}
+                          onClick={() => updateActiveField({ sub_fields: [...(activeField.sub_fields || []), { name: '', type: 'text' }] })}>
+                          添加子字段
+                        </Button>
                       </div>
-                    </div>
+                    </ConfigSection>
                   )}
 
                   {activeField.type === 'table' && (
-                    <div>
-                      <Text strong style={{ fontSize: 13 }}>表格列定义</Text>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                    <ConfigSection title="表格列定义">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {(activeField.table_columns || []).map((col, i) => (
                           <div key={i} style={{ display: 'flex', gap: 4 }}>
-                            <Input size="small" value={col.name} onChange={e => { const n = [...activeField.table_columns]; n[i].name = e.target.value; updateActiveField({ table_columns: n }); }} placeholder="列名" />
-                            <Select size="small" value={col.type || 'text'} onChange={v => { const n = [...activeField.table_columns]; n[i].type = v; updateActiveField({ table_columns: n }); }} style={{ width: 100 }}
+                            <Input size="small" value={col.name} style={{ borderRadius: 6 }}
+                              onChange={e => { const n = [...activeField.table_columns]; n[i].name = e.target.value; updateActiveField({ table_columns: n }); }}
+                              placeholder="列名" />
+                            <Select size="small" value={col.type || 'text'} style={{ width: 80 }}
+                              onChange={v => { const n = [...activeField.table_columns]; n[i].type = v; updateActiveField({ table_columns: n }); }}
                               options={[{ value: 'text', label: '文本' }, { value: 'number', label: '数字' }, { value: 'date', label: '日期' }]} />
-                            <Button size="small" danger type="text" icon={<DeleteOutlined />} onClick={() => { const n = [...activeField.table_columns]; n.splice(i, 1); updateActiveField({ table_columns: n }); }} />
+                            <Button size="small" danger type="text" icon={<DeleteOutlined />}
+                              onClick={() => { const n = [...activeField.table_columns]; n.splice(i, 1); updateActiveField({ table_columns: n }); }} />
                           </div>
                         ))}
-                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => updateActiveField({ table_columns: [...(activeField.table_columns || []), { name: '', type: 'text' }] })}>添加列</Button>
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} style={{ borderRadius: 6 }}
+                          onClick={() => updateActiveField({ table_columns: [...(activeField.table_columns || []), { name: '', type: 'text' }] })}>
+                          添加列
+                        </Button>
                       </div>
-                    </div>
+                    </ConfigSection>
                   )}
-
+                </>
+              ) : rightTab === 'field' && (
+                <div style={{ textAlign: 'center', padding: '40px 0', color: '#bfbfbf', fontSize: 13 }}>
+                  <FormOutlined style={{ fontSize: 32, marginBottom: 12, display: 'block' }} />
+                  点击画布中的字段查看属性
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* 拖拽浮层 (用于显示正在拖拽的组件/卡片) */}
-        <DragOverlay dropAnimation={{ duration: 250, easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)' }}>
+        {/* 拖拽浮层 */}
+        <DragOverlay dropAnimation={{ duration: 200, easing: 'ease' }}>
           {activeDragItem ? (
             activeDragItem.data.current?.isNewComponent ? (
               <div style={{
-                padding: '8px 12px', background: '#fff', border: `1px solid ${TYPE_MAP[activeDragItem.data.current.type].color}`,
-                color: TYPE_MAP[activeDragItem.data.current.type].color, borderRadius: 6, opacity: 0.9, boxShadow: '0 8px 24px rgba(0,0,0,0.1)'
+                padding: '8px 14px', background: '#fff',
+                border: `1.5px solid ${TYPE_MAP[activeDragItem.data.current.type]?.color || '#1677ff'}`,
+                color: TYPE_MAP[activeDragItem.data.current.type]?.color, borderRadius: 6,
+                opacity: 0.92, boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
+                display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 500,
               }}>
-                <span style={{ fontSize: 16, marginRight: 8 }}>{TYPE_MAP[activeDragItem.data.current.type].icon}</span>
-                <span style={{ fontSize: 13, fontWeight: 500 }}>{TYPE_MAP[activeDragItem.data.current.type].label}</span>
+                <span style={{ fontSize: 16 }}>{TYPE_MAP[activeDragItem.data.current.type]?.icon}</span>
+                {TYPE_MAP[activeDragItem.data.current.type]?.label}
               </div>
             ) : activeDragItem.data.current?.isCanvasField ? (
-              <Card size="small" style={{ borderRadius: 8, boxShadow: '0 12px 24px rgba(0,0,0,0.15)', opacity: 0.9 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <HolderOutlined style={{ color: '#bfbfbf' }} />
-                  <span style={{ fontWeight: 600 }}>{activeDragItem.data.current.field.name || '未命名字段'}</span>
-                </div>
-              </Card>
+              <div style={{
+                padding: '10px 16px', background: '#fff', borderRadius: 8,
+                boxShadow: '0 12px 28px rgba(0,0,0,0.18)', opacity: 0.9,
+                display: 'flex', alignItems: 'center', gap: 10,
+              }}>
+                <HolderOutlined style={{ color: '#bfbfbf' }} />
+                <span style={{ fontWeight: 600 }}>{activeDragItem.data.current.field.name || '未命名字段'}</span>
+              </div>
+            ) : activeDragItem.data.current?.isCategory ? (
+              <div style={{
+                padding: '5px 8px', background: '#f0f0f0', borderRadius: 4, 
+                display: 'flex', alignItems: 'center', opacity: 0.9, boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+              }}>
+                <FolderOpenOutlined style={{ color: '#faad14', marginRight: 6, fontSize: 13 }} />
+                <span style={{ fontWeight: 600, fontSize: 12.5, color: '#262626' }}>{activeDragItem.data.current.category.name}</span>
+              </div>
+            ) : activeDragItem.data.current?.isForm ? (
+              <div style={{
+                padding: '5px 8px', background: '#fff', borderRadius: 4, 
+                display: 'flex', alignItems: 'center', opacity: 0.9, boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                borderLeft: '3px solid #1677ff', color: '#1677ff'
+              }}>
+                <FileTextOutlined style={{ marginRight: 6, fontSize: 12 }} />
+                <span style={{ fontSize: 12.5 }}>{activeDragItem.data.current.form.name}</span>
+              </div>
             ) : null
           ) : null}
         </DragOverlay>

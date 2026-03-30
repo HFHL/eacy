@@ -310,11 +310,15 @@ def update_patient_crf_field(project_id, patient_id):
         form_name=form_name, field_name=field_name, is_adopted=True
     ).update({"is_adopted": False})
     
+    doc_id = data.get('document_id')
+    if not doc_id:
+        doc_id = None
+        
     # 写入一条新的 adopted 记录
     record = CrfFieldExtraction(
         project_id=project_id,
         patient_id=patient_id,
-        document_id=data.get('document_id', ''),
+        document_id=doc_id,
         form_name=form_name,
         field_name=field_name,
         extracted_value=new_value,
@@ -368,9 +372,11 @@ def save_patient_crf_form(project_id, patient_id):
                 source_blocks = []
 
             # 从 source_blocks 获取 document_id (如果有)
-            doc_id = ""
+            doc_id = None
             if source_blocks and isinstance(source_blocks, list) and isinstance(source_blocks[0], dict):
-                doc_id = source_blocks[0].get("document_id", "")
+                doc_id = source_blocks[0].get("document_id")
+                if not doc_id:
+                    doc_id = None
 
             # 过滤掉无意义的空值，可根据诉求保留
             #if val is None or (isinstance(val, str) and not val.strip()):

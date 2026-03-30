@@ -535,7 +535,6 @@ def extract_crf_by_form(self, project_id: str, patient_id: str, form_name: str, 
         else:
             from app.services.form_document_matcher import match_documents_for_form, determine_topK
             topK = determine_topK(form_schema)
-            import json
             document_ids, routing_trace = match_documents_for_form(form_schema, documents_meta, topK=topK)
         
         if not document_ids:

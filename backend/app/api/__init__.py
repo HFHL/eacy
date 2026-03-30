@@ -10,6 +10,7 @@ def register_blueprints(app):
     from .batch import batch_bp
     from .project import project_bp
     from .crf_template import crf_template_bp
+    from .stats import stats_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(oss_bp, url_prefix='/api/oss')
@@ -20,4 +21,5 @@ def register_blueprints(app):
     app.register_blueprint(batch_bp, url_prefix='/api/batch')
     app.register_blueprint(project_bp, url_prefix='/api/projects')
     app.register_blueprint(crf_template_bp, url_prefix='/api/crf-templates')
+    app.register_blueprint(stats_bp, url_prefix='/api/stats')
 

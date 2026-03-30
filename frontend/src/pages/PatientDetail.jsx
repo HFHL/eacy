@@ -1,13 +1,195 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Tag, Button, Spin, Empty, message, Select, DatePicker, Popconfirm } from 'antd';
-import { ArrowLeftOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons';
+import {
+  ArrowLeftOutlined, EyeOutlined, DeleteOutlined,
+  FileTextOutlined, FilePdfOutlined, FileImageOutlined, FileOutlined,
+  DownOutlined, RightOutlined,
+} from '@ant-design/icons';
 import { getPatientDetail, getPatientDocuments, removePatientDocument } from '../api/patient';
 import DocumentDetailModal from '../components/DocumentDetailModal';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
 
+/* ─── 文档类型 → 图标 + 颜色 ─── */
+const DOC_TYPE_CONFIG = {
+  '实验室检查': { icon: <FileTextOutlined />, iconColor: '#10b981', tagBg: '#d1fae5', tagColor: '#065f46' },
+  '影像检查':   { icon: <FileImageOutlined />, iconColor: '#f59e0b', tagBg: '#fef3c7', tagColor: '#92400e' },
+  '病理报告':   { icon: <FilePdfOutlined />,  iconColor: '#ef4444', tagBg: '#fee2e2', tagColor: '#991b1b' },
+  '基因检测':   { icon: <FileTextOutlined />, iconColor: '#8b5cf6', tagBg: '#ede9fe', tagColor: '#6d28d9' },
+  '病历记录':   { icon: <FileTextOutlined />, iconColor: '#3b82f6', tagBg: '#dbeafe', tagColor: '#1d4ed8' },
+  '手术记录':   { icon: <FileTextOutlined />, iconColor: '#ec4899', tagBg: '#fce7f3', tagColor: '#be185d' },
+};
+const getDocTypeConfig = (type) =>
+  DOC_TYPE_CONFIG[type] || { icon: <FileOutlined />, iconColor: '#6b7280', tagBg: '#f3f4f6', tagColor: '#374151' };
+
+/* ─── 单张文档卡片 ─── */
+const DocumentCard = ({ doc, onView, onRemove }) => {
+  const cfg = getDocTypeConfig(doc.doc_type);
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      onClick={() => onView(doc)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 14,
+        padding: '13px 16px',
+        border: `1px solid ${hovered ? 'rgba(99,102,241,0.25)' : '#f0f0f0'}`,
+        borderRadius: 8,
+        background: hovered ? '#fafbff' : '#fff',
+        boxShadow: hovered ? '0 4px 12px rgba(99,102,241,0.10)' : '0 1px 2px rgba(0,0,0,0.03)',
+        transform: hovered ? 'translateY(-1px)' : 'none',
+        transition: 'all 0.18s ease',
+        cursor: 'pointer',
+        width: '100%',
+      }}
+    >
+      {/* 左侧图标 */}
+      <div style={{
+        width: 44, height: 44, flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#f8fafc', border: '1px solid #f0f0f0', borderRadius: 6,
+        fontSize: 22, color: cfg.iconColor,
+      }}>
+        {cfg.icon}
+      </div>
+
+      {/* 中间主信息 */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {/* 第一行：类型标题 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+          <span style={{
+            fontSize: 15, fontWeight: 600, color: '#111827',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {doc.doc_type || doc.doc_title || '未知类型'}
+          </span>
+          {doc.doc_sub_type && (
+            <Tag style={{
+              margin: 0, border: 'none', fontSize: 11,
+              padding: '1px 7px', borderRadius: 4, flexShrink: 0,
+              background: cfg.tagBg, color: cfg.tagColor, fontWeight: 500,
+              lineHeight: '18px',
+            }}>
+              {doc.doc_sub_type}
+            </Tag>
+          )}
+        </div>
+        {/* 第二行：文件名 */}
+        <div style={{
+          fontSize: 12.5, color: '#6b7280',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          marginBottom: 5,
+        }}>
+          {doc.filename || doc.doc_title || '未知文件'}
+        </div>
+        {/* 第三行：元数据小片段 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          {doc.institution_name && (
+            <span style={{ fontSize: 11, color: '#9ca3af' }}>{doc.institution_name}</span>
+          )}
+          {doc.institution_name && doc.doc_date && (
+            <span style={{ color: '#e5e7eb', fontSize: 11 }}>|</span>
+          )}
+          {doc.doc_date && (
+            <span style={{ fontSize: 11, color: '#9ca3af', fontVariantNumeric: 'tabular-nums' }}>
+              {doc.doc_date}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 右侧操作 */}
+      <div
+        style={{ flexShrink: 0, display: 'flex', gap: 6 }}
+        onClick={e => e.stopPropagation()}
+      >
+        <Button
+          type="default"
+          size="small"
+          icon={<EyeOutlined />}
+          style={{ borderRadius: 6, fontSize: 12, color: '#6b7280', border: '1px solid #e5e7eb', padding: '0 12px' }}
+          onClick={() => onView(doc)}
+        >
+          查看
+        </Button>
+        <Popconfirm
+          title="移除文档"
+          description="确定要将该文档从该患者病历夹中移除吗？"
+          onConfirm={() => onRemove(doc.id)}
+        >
+          <Button
+            type="text"
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            style={{ borderRadius: 6, fontSize: 12, padding: '0 8px' }}
+          >
+            移除
+          </Button>
+        </Popconfirm>
+      </div>
+    </div>
+  );
+};
+
+/* ─── 带时间轴节点的分组块 ─── */
+const TimelineGroup = ({ label, docs, groupType, onView, onRemove }) => {
+  const [expanded, setExpanded] = useState(true);
+  const groupColor = groupType === 'type' ? '#10b981' : '#6366f1';
+  return (
+    <div style={{ marginBottom: 4 }}>
+      {/* Group header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: expanded ? 12 : 0 }}>
+        <div style={{
+          width: 12, height: 12, borderRadius: '50%', flexShrink: 0,
+          background: groupColor,
+        }} />
+        <span style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>{label}</span>
+        <span style={{ fontSize: 12, color: '#9ca3af' }}>{docs.length} 个文档</span>
+        <Button
+          type="text"
+          size="small"
+          icon={expanded ? <DownOutlined /> : <RightOutlined />}
+          onClick={() => setExpanded(v => !v)}
+          style={{ padding: '0 4px', color: '#9ca3af', marginLeft: 2 }}
+        />
+      </div>
+
+      {/* Group content with left rail */}
+      {expanded && (
+        <div style={{ display: 'flex', gap: 0 }}>
+          {/* Left rail */}
+          <div style={{ width: 28, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{ width: 2, flex: 1, background: `${groupColor}40`, borderRadius: 2 }} />
+          </div>
+          {/* Cards */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 16 }}>
+            {docs.map(doc => (
+              <div key={doc.patient_document_id || doc.id} style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
+                <div style={{ width: 0, flexShrink: 0, marginTop: 20, position: 'relative' }}>
+                  <div style={{
+                    position: 'absolute', left: -23, top: 0,
+                    width: 8, height: 8, borderRadius: '50%',
+                    border: `2px solid ${groupColor}`,
+                    background: '#fff',
+                  }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <DocumentCard doc={doc} onView={onView} onRemove={onRemove} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─── 主页面 ─── */
 const PatientDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -61,8 +243,8 @@ const PatientDetail = () => {
     try {
       await removePatientDocument(id, docId);
       message.success('文档已从当前患者病历夹中移除');
-      fetchPatient();      // refresh patient document count
-      fetchAllDocuments(); // refresh document list
+      fetchPatient();
+      fetchAllDocuments();
     } catch (err) {
       message.error(err.response?.data?.message || '移除文档失败');
     }
@@ -79,12 +261,9 @@ const PatientDetail = () => {
   const timelineGroups = useMemo(() => {
     let docs = [...allDocs];
 
-    // Type filter
     if (typeFilter !== '全部') {
       docs = docs.filter(d => d.doc_type === typeFilter);
     }
-
-    // Date range filter
     if (dateRange && dateRange[0] && dateRange[1]) {
       const start = dateRange[0].format('YYYY-MM-DD');
       const end = dateRange[1].format('YYYY-MM-DD');
@@ -94,14 +273,12 @@ const PatientDetail = () => {
       });
     }
 
-    // Always sort by doc_date within each group
     docs.sort((a, b) => {
       const da = a.doc_date || '';
       const db = b.doc_date || '';
       return sortOrder === 'desc' ? db.localeCompare(da) : da.localeCompare(db);
     });
 
-    // Group
     const map = new Map();
     docs.forEach(doc => {
       const key = groupBy === 'type'
@@ -114,7 +291,6 @@ const PatientDetail = () => {
     return Array.from(map.entries()).map(([label, docs]) => ({ label, docs }));
   }, [allDocs, typeFilter, dateRange, groupBy, sortOrder]);
 
-  // Date range bounds
   const dateRangeBounds = useMemo(() => {
     if (!allDocs.length) return null;
     const dates = allDocs.map(d => d.doc_date).filter(Boolean).sort();
@@ -190,15 +366,8 @@ const PatientDetail = () => {
               </span>
             </div>
           ))}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '5px 16px',
-            fontSize: 13,
-          }}>
-            <Tag color="#e0e7ff" style={{
-              color: '#4f46e5', border: 'none', fontWeight: 600, fontSize: 12,
-              padding: '2px 10px', borderRadius: 4,
-            }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 16px', fontSize: 13 }}>
+            <Tag style={{ color: '#4f46e5', border: 'none', fontWeight: 600, fontSize: 12, padding: '2px 10px', borderRadius: 4, background: '#e0e7ff' }}>
               归档文档总数：{patient.document_count || allDocs.length} 份
             </Tag>
           </div>
@@ -207,10 +376,9 @@ const PatientDetail = () => {
         {/* Sort / Filter Bar */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-          padding: '12px 0', marginBottom: 8,
+          padding: '12px 0', marginBottom: 16,
           borderBottom: '1px solid #f0f0f0',
         }}>
-          {/* Group by */}
           <Select
             value={groupBy}
             onChange={v => setGroupBy(v)}
@@ -218,15 +386,11 @@ const PatientDetail = () => {
             variant="outlined"
             style={{ width: 140 }}
             options={[
-              { value: 'type', label: '按文档类型分组' },
-              { value: 'date', label: '按生效日期分组' },
+              { value: 'type', label: '📂 按文档类型分组' },
+              { value: 'date', label: '📅 按生效日期分组' },
             ]}
           />
-
-          {/* Divider */}
           <div style={{ width: 1, height: 20, background: '#e5e7eb' }} />
-
-          {/* Sort order (always by date) */}
           <Select
             value={sortOrder}
             onChange={v => setSortOrder(v)}
@@ -238,10 +402,7 @@ const PatientDetail = () => {
               { value: 'asc', label: '日期由远到近' },
             ]}
           />
-
-          {/* Divider */}
           <div style={{ width: 1, height: 20, background: '#e5e7eb' }} />
-
           {/* Type filter tabs */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontSize: 13, color: '#9ca3af', whiteSpace: 'nowrap' }}>筛选类型</span>
@@ -250,25 +411,18 @@ const PatientDetail = () => {
                 key={type}
                 onClick={() => setTypeFilter(type)}
                 style={{
-                  padding: '3px 12px',
-                  borderRadius: 4,
-                  fontSize: 13,
-                  cursor: 'pointer',
+                  padding: '3px 12px', borderRadius: 4, fontSize: 13, cursor: 'pointer',
                   fontWeight: typeFilter === type ? 600 : 400,
                   color: typeFilter === type ? '#4f46e5' : '#6b7280',
                   background: typeFilter === type ? '#eef2ff' : 'transparent',
                   border: typeFilter === type ? '1px solid #c7d2fe' : '1px solid transparent',
-                  transition: 'all 0.15s',
-                  whiteSpace: 'nowrap',
-                  userSelect: 'none',
+                  transition: 'all 0.15s', whiteSpace: 'nowrap', userSelect: 'none',
                 }}
               >
                 {type}
               </div>
             ))}
           </div>
-
-          {/* Date range */}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
             <RangePicker
               size="small"
@@ -285,182 +439,22 @@ const PatientDetail = () => {
           </div>
         </div>
 
-        {/* Timeline */}
+        {/* Document list */}
         {docsLoading ? (
           <div style={{ textAlign: 'center', padding: 60 }}><Spin size="large" /></div>
         ) : timelineGroups.length === 0 ? (
           <Empty description="暂无匹配的归档文档" style={{ padding: 60 }} />
         ) : (
-          <div style={{ paddingTop: 16 }}>
-            {timelineGroups.map((group, gi) => (
-              <div key={group.label} style={{ display: 'flex', gap: 0 }}>
-                {/* Group label column */}
-                <div style={{
-                  width: 130, flexShrink: 0,
-                  paddingTop: 14, paddingRight: 16,
-                  textAlign: 'right',
-                }}>
-                  {/* Only show label on first doc of the group */}
-                  <span style={{
-                    fontSize: 14, fontWeight: 600, color: '#374151',
-                    fontVariantNumeric: 'tabular-nums',
-                  }}>
-                    {group.label}
-                  </span>
-                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
-                    {group.docs.length} 份
-                  </div>
-                </div>
-
-                {/* Timeline rail */}
-                <div style={{
-                  width: 28, flexShrink: 0,
-                  display: 'flex', flexDirection: 'column', alignItems: 'center',
-                  position: 'relative',
-                }}>
-                  {group.docs.map((_, di) => (
-                    <React.Fragment key={di}>
-                      {/* Connector line above dot */}
-                      {(gi > 0 || di > 0) && (
-                        <div style={{
-                          width: 1.5, height: di === 0 ? 18 : 12,
-                          background: '#d1d5db',
-                        }} />
-                      )}
-                      {di === 0 && gi === 0 && <div style={{ height: 18 }} />}
-                      {/* Dot */}
-                      <div style={{
-                        width: 10, height: 10, borderRadius: '50%',
-                        background: '#fff',
-                        border: '2px solid #94a3b8',
-                        flexShrink: 0,
-                      }} />
-                      {/* Connector line below dot */}
-                      {(di < group.docs.length - 1 || gi < timelineGroups.length - 1) && (
-                        <div style={{
-                          width: 1.5, flex: 1, minHeight: 12,
-                          background: '#d1d5db',
-                        }} />
-                      )}
-                    </React.Fragment>
-                  ))}
-                </div>
-
-                {/* Document rows */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {group.docs.map((doc, di) => {
-                    const typeColorMap = {
-                      '病历记录': { bg: '#dbeafe', color: '#1d4ed8' },
-                      '检查结果': { bg: '#d1fae5', color: '#047857' },
-                      '检验报告': { bg: '#fef3c7', color: '#92400e' },
-                      '影像报告': { bg: '#ede9fe', color: '#6d28d9' },
-                      '手术记录': { bg: '#fce7f3', color: '#be185d' },
-                    };
-                    const tc = typeColorMap[doc.doc_type] || { bg: '#f3f4f6', color: '#4b5563' };
-
-                    return (
-                      <div
-                        key={doc.patient_document_id || doc.id || di}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 16,
-                          padding: '12px 16px',
-                          borderBottom: '1px solid #f5f5f5',
-                          transition: 'background 0.15s',
-                          cursor: 'pointer',
-                          borderRadius: 6,
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                        onClick={() => { setSelectedDoc(doc); setModalOpen(true); }}
-                      >
-                        {/* Title + type */}
-                        <div style={{ flex: '0 0 280px', display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                          <span style={{
-                            fontSize: 14, fontWeight: 600, color: '#111827',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>
-                            {doc.doc_title || doc.filename || '未知文档'}
-                          </span>
-                          {doc.doc_type && (
-                            <Tag style={{
-                              margin: 0, border: 'none', fontSize: 11,
-                              padding: '1px 8px', borderRadius: 4,
-                              background: tc.bg, color: tc.color,
-                              fontWeight: 500, flexShrink: 0,
-                              lineHeight: '20px',
-                            }}>
-                              {doc.doc_type}
-                            </Tag>
-                          )}
-                        </div>
-
-                        {/* Effective date */}
-                        <div style={{
-                          flex: '0 0 170px',
-                          fontSize: 13, color: '#6b7280',
-                          fontVariantNumeric: 'tabular-nums',
-                        }}>
-                          {doc.doc_date ? `${doc.doc_date} 14:00:00` : '-'}
-                        </div>
-
-                        {/* Archive date */}
-                        <div style={{
-                          flex: '0 0 170px',
-                          fontSize: 13, color: '#6b7280',
-                          fontVariantNumeric: 'tabular-nums',
-                        }}>
-                          {doc.created_at ? new Date(doc.created_at).toLocaleString('zh-CN', {
-                            year: 'numeric', month: '2-digit', day: '2-digit',
-                            hour: '2-digit', minute: '2-digit', second: '2-digit',
-                          }) : '-'}
-                        </div>
-
-                        {/* View button */}
-                        <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', gap: 6 }}>
-                          <Button
-                            type="default"
-                            size="small"
-                            icon={<EyeOutlined />}
-                            style={{
-                              borderRadius: 6, fontSize: 12, color: '#6b7280',
-                              border: '1px solid #e5e7eb', padding: '0 12px',
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedDoc(doc);
-                              setModalOpen(true);
-                            }}
-                          >
-                            查看
-                          </Button>
-                          <Popconfirm
-                            title="移除文档"
-                            description="确定要将该文档从该患者病历夹中移除吗？"
-                            onConfirm={(e) => {
-                              e.stopPropagation();
-                              handleRemoveDoc(doc.id);
-                            }}
-                            onCancel={(e) => {
-                              e.stopPropagation();
-                            }}
-                          >
-                            <Button
-                              type="text"
-                              size="small"
-                              danger
-                              icon={<DeleteOutlined />}
-                              style={{ borderRadius: 6, fontSize: 12, padding: '0 8px' }}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              移除
-                            </Button>
-                          </Popconfirm>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+          <div style={{ paddingTop: 8 }}>
+            {timelineGroups.map(group => (
+              <TimelineGroup
+                key={group.label}
+                label={group.label}
+                docs={group.docs}
+                groupType={groupBy}
+                onView={(doc) => { setSelectedDoc(doc); setModalOpen(true); }}
+                onRemove={handleRemoveDoc}
+              />
             ))}
           </div>
         )}

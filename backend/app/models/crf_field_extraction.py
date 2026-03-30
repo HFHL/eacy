@@ -25,7 +25,7 @@ class CrfFieldExtraction(db.Model):
     # 关联维度
     project_id = db.Column(db.String(36), db.ForeignKey('research_projects.id'), nullable=False, index=True)
     patient_id = db.Column(db.String(36), db.ForeignKey('patients.id'), nullable=False, index=True)
-    document_id = db.Column(db.String(36), db.ForeignKey('documents.id'), nullable=False, index=True)
+    document_id = db.Column(db.String(36), db.ForeignKey('documents.id'), nullable=True, index=True)
 
     # CRF 定位
     form_name = db.Column(db.String(200), nullable=False)
