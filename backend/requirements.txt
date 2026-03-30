@@ -1,0 +1,11 @@
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+psycopg[binary]>=3.2
+Flask-Cors==4.0.1
+python-dotenv==1.0.1
+passlib==1.7.4
+celery==5.4.0
+redis==5.0.3
+alibabacloud_sts20150401
+alibabacloud_credentials
+google-adk

@@ -1,0 +1,200 @@
+{
+  "$description": "通用结构化抽取输出模板。用于指导模型稳定输出 result + audit 双结构，同时兼容简单字段抽取与复杂字段组抽取场景。",
+  "top_level_contract": {
+    "required_keys": [
+      "result",
+      "audit"
+    ],
+    "additional_top_level_keys_allowed": false
+  },
+  "result_policy": {
+    "description": "result 仅包含当前任务字段列表定义的字段。",
+    "missing_value_style": "null",
+    "notes": [
+      "required=true 的字段必须输出；无证据时可输出 null，禁止编造。",
+      "required=false 的字段建议保持结构稳定；无证据时输出 null。",
+      "以下示例仅用于说明结构模式，不代表实际任务必须包含这些字段。最终result字段集合始终以当前任务传入的字段列表为准。"
+    ]
+  },
+  "audit_policy": {
+    "description": "audit 默认采用简单扁平结构，以 fields 保存字段级审计项。",
+    "default_container": "audit.fields",
+    "minimum_item_keys": [
+      "raw",
+      "value"
+    ],
+    "recommended_item_keys": [
+      "source_id",
+      "page_idx",
+      "document_id"
+    ],
+    "notes": [
+      "简单场景建议直接使用 audit.fields.<字段名>。",
+      "复杂字段组场景可在 audit 顶层增加组级容器，但组内仍建议使用 fields 保存字段级审计项。",
+      "audit.raw 必须保留原文片段，audit.value 对应规范化后的结果值。",
+      "page_idx 由LLM输出，表示 audit.raw 所在文档页码；无页码信息、非分页文本或无法判断时输出 0。",
+      "document_id 更适合由解析与后处理流程注入，默认不要求LLM主动生成。"
+    ]
+  },
+  "canonical_example": {
+    "description": "完整双结构模式示例，使用占位符字段名和值，仅用于说明 result 与 audit 的对应关系，不代表固定业务字段集合。",
+    "result": {
+      "<数组字段A>": [
+        {
+          "<子字段1>": "<值1>",
+          "<子字段2>": "<值2>"
+        },
+        {
+          "<子字段1>": "<值3>",
+          "<子字段2>": "<值4>"
+        }
+      ],
+      "<标量字段B>": "<规范化后的字符串值>",
+      "<枚举字段C>": "<合法枚举值>",
+      "<数字字段D>": 123,
+      "<日期字段E>": "<YYYY-MM-DD或YYYY-MM-DDTHH:MM:SS>",
+      "<可缺失字段F>": null
+    },
+    "audit": {
+      "fields": {
+        "<数组字段A> / [0] / <子字段1>": {
+          "raw": "<原文片段1>",
+          "value": "<值1>",
+          "source_id": "<来源片段ID>",
+          "page_idx": 2
+        },
+        "<数组字段A> / [0] / <子字段2>": {
+          "raw": "<原文片段2>",
+          "value": "<值2>",
+          "source_id": "<来源片段ID>",
+          "page_idx": 2
+        },
+        "<数组字段A> / [1] / <子字段1>": {
+          "raw": "<原文片段3>",
+          "value": "<值3>",
+          "source_id": "<来源片段ID>",
+          "page_idx": 3
+        },
+        "<数组字段A> / [1] / <子字段2>": {
+          "raw": "<原文片段4>",
+          "value": "<值4>",
+          "source_id": "<来源片段ID>",
+          "page_idx": 3
+        },
+        "<标量字段B>": {
+          "raw": "<支持该字段的原文片段>",
+          "value": "<规范化后的字符串值>",
+          "source_id": "<来源片段ID>",
+          "page_idx": 1
+        },
+        "<枚举字段C>": {
+          "raw": "<原文枚举表达>",
+          "value": "<合法枚举值>",
+          "source_id": "<来源片段ID>",
+          "page_idx": 1
+        },
+        "<数字字段D>": {
+          "raw": "<原文数字表达>",
+          "value": 123,
+          "source_id": "<来源片段ID>",
+          "page_idx": 1
+        },
+        "<日期字段E>": {
+          "raw": "<原文日期表达>",
+          "value": "<YYYY-MM-DD或YYYY-MM-DDTHH:MM:SS>",
+          "source_id": "<来源片段ID>",
+          "page_idx": 0
+        },
+        "<可缺失字段F>": {
+          "raw": null,
+          "value": null,
+          "source_id": null,
+          "page_idx": 0
+        }
+      }
+    }
+  },
+  "pattern_examples": {
+    "array_field": {
+      "description": "数组字段模式示例，突出 result 数组与 audit 路径的对应关系。",
+      "result_fragment": {
+        "<数组字段>": [
+          {
+            "<子字段1>": "<值1>",
+            "<子字段2>": "<值2>"
+          },
+          {
+            "<子字段1>": "<值3>",
+            "<子字段2>": "<值4>"
+          }
+        ]
+      },
+      "audit_fragment": {
+        "fields": {
+          "<数组字段> / [0] / <子字段1>": {
+            "raw": "<原文片段1>",
+            "value": "<值1>",
+            "page_idx": 2
+          },
+          "<数组字段> / [0] / <子字段2>": {
+            "raw": "<原文片段2>",
+            "value": "<值2>",
+            "page_idx": 2
+          },
+          "<数组字段> / [1] / <子字段1>": {
+            "raw": "<原文片段3>",
+            "value": "<值3>",
+            "page_idx": 3
+          },
+          "<数组字段> / [1] / <子字段2>": {
+            "raw": "<原文片段4>",
+            "value": "<值4>",
+            "page_idx": 3
+          }
+        }
+      }
+    },
+    "missing_value": {
+      "description": "字段缺失模式示例，强调 result 与 audit 同时显式输出 null。",
+      "result_fragment": {
+        "<可缺失字段1>": null,
+        "<可缺失字段2>": null
+      },
+      "audit_fragment": {
+        "fields": {
+          "<可缺失字段1>": {
+            "raw": null,
+            "value": null,
+            "source_id": null,
+            "page_idx": 0
+          },
+          "<可缺失字段2>": {
+            "raw": null,
+            "value": null,
+            "source_id": null,
+            "page_idx": 0
+          }
+        }
+      }
+    },
+    "group_container": {
+      "description": "复杂字段组模式示例。audit 顶层可使用组级容器，但组内仍建议通过 fields 保存字段级审计项。",
+      "audit_fragment": {
+        "<字段组名>": {
+          "fields": {
+            "<字段组名> / <字段1>": {
+              "raw": "<原文片段或null>",
+              "value": "<规范化值或null>",
+              "page_idx": 0
+            },
+            "<字段组名> / [*] / <子字段2>": {
+              "raw": "<原文片段或null>",
+              "value": "<规范化值或null>",
+              "page_idx": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}
