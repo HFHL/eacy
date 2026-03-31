@@ -10,4 +10,3 @@ oss2==2.18.4
 alibabacloud_sts20150401
 alibabacloud_credentials
 google-adk[extensions]
-PyJWT==2.8.0

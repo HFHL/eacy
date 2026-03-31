@@ -7,13 +7,20 @@ const api = axios.create({
 // Inject Authentication Context
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('eacy_token');
+  const userStr = localStorage.getItem('eacy_user');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
-
+  if (userStr) {
+    try {
+      const user = JSON.parse(userStr);
+      if (user.id) config.headers['X-User-Id'] = user.id;
+    } catch(e) {}
+  }
+  
   // 强制禁用缓存，防止浏览器记住之前因端口冲突导致的 403 错误
   config.params = { ...config.params, _t: Date.now() };
-
+  
   return config;
 });
 

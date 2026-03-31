@@ -5,7 +5,6 @@ import os
 from flask import Blueprint, request, jsonify
 from ..extensions import db
 from ..models.project import ResearchProject, ProjectPatient
-from .auth_utils import get_current_user_id
 from ..models.patient import Patient, PatientDocument
 from ..models.crf_template import CrfTemplate
 from sqlalchemy import text
@@ -105,7 +104,7 @@ def create_project():
         return jsonify({"success": False, "message": "项目名称不能为空"}), 400
 
     # 从请求头获取当前用户
-    creator_id_raw = get_current_user_id() or data.get('creator_id')
+    creator_id_raw = request.headers.get('X-User-Id') or data.get('creator_id')
     creator_id = int(creator_id_raw) if creator_id_raw else None
 
     # 同一用户下项目不允许重名
@@ -430,7 +429,7 @@ def upload_extract_patient_crf_form(project_id, patient_id):
     from ..models.document import Document
     from ..models.patient import PatientDocument
 
-    uploader_id = get_current_user_id() or 1
+    uploader_id = int(request.headers.get("X-User-Id", 1))
     doc_id = str(uuid.uuid4())
     
     # 1. 创建文档记录
