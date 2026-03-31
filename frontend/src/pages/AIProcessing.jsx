@@ -26,8 +26,12 @@ import {
   CheckCircleOutlined,
   RobotOutlined,
   FolderAddOutlined,
+  FolderOutlined,
+  FolderOpenOutlined,
   FileTextOutlined,
   ExclamationCircleOutlined,
+  UserOutlined,
+  RightOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api, { getDocumentList, getSystemConfig, deleteDocument, reOcrDocument, extractMetadata, archiveDocument } from '../api/document';
@@ -216,6 +220,9 @@ const AIProcessing = () => {
     localStorage.removeItem('eacy_ai_archive_clusters');
   }, []);
   
+  // 受控展开/折叠（患者文件夹 + 集群分组行）
+  const [expandedRowKeys, setExpandedRowKeys] = useState([]);
+
   // Document Detail Modal State
   const [detailDoc, setDetailDoc] = useState(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false); // Renamed from detailVisible
@@ -351,9 +358,69 @@ const AIProcessing = () => {
     }
   };
 
+  const groupArchivedToPatientFolders = React.useCallback((docs, folderIdPrefix = 'patient_folder_') => {
+    const patientMap = new Map();
+    docs.forEach(doc => {
+      const patientId = doc.patient_id || '__unlinked__';
+      const patientName = doc.patient_name || '未关联患者';
+      if (!patientMap.has(patientId)) {
+        patientMap.set(patientId, {
+          id: `${folderIdPrefix}${patientId}`,
+          isPatientFolder: true,
+          patientId,
+          patientName,
+          children: [],
+        });
+      }
+      patientMap.get(patientId).children.push({ ...doc, isArchivedChild: true });
+    });
+    return Array.from(patientMap.values());
+  }, []);
+
+  // 已归档 Tab：按患者分组成文件夹结构（所有文档一次性取回，不存在分页丢失问题）
+  const archivedGroupedData = React.useMemo(() => {
+    if (activeTab !== 'archived') return null;
+    return groupArchivedToPatientFolders(fileList);
+  }, [activeTab, fileList, groupArchivedToPatientFolders]);
+
   const tableData = React.useMemo(() => {
-    if (clusters.length === 0) return fileList;
-    
+    // 已归档 Tab：始终用患者文件夹分组，不显示 clusters
+    if (activeTab === 'archived') {
+      return archivedGroupedData || fileList;
+    }
+
+    // 全部 Tab：已归档文档也按患者文件夹显示；非归档文档平铺显示
+    if (activeTab === 'all') {
+      const archivedDocs = fileList.filter(d => d.status === 'ARCHIVED');
+      const nonArchivedDocs = fileList.filter(d => d.status !== 'ARCHIVED');
+      const archivedFoldersInAll = groupArchivedToPatientFolders(archivedDocs, 'all_patient_folder_');
+
+      // 无 clusters 时：直接合并渲染
+      if (clusters.length === 0) {
+        return [...nonArchivedDocs, ...archivedFoldersInAll];
+      }
+
+      // 有 clusters 时：仅对非归档文档做 clusters 分组，归档文档仍按患者文件夹展示
+      const clusteredDocIds = new Set();
+      const groupRows = clusters.map(c => {
+        c.documents.forEach(d => clusteredDocIds.add(d.id));
+        return {
+          id: 'group_' + c.cluster_id,
+          isGroup: true,
+          clusterData: c,
+          children: c.documents.map(d => ({ ...d, isChild: true }))
+        };
+      });
+
+      const freeDocs = nonArchivedDocs.filter(d => !clusteredDocIds.has(d.id));
+      return [...groupRows, ...freeDocs, ...archivedFoldersInAll];
+    }
+
+    // 集群分组只在"待归档" Tab 显示，不能污染"待解析"等其他 Tab
+    if (clusters.length === 0 || activeTab !== 'todo') {
+      return fileList;
+    }
+
     const clusteredDocIds = new Set();
     const groupRows = clusters.map(c => {
       c.documents.forEach(d => clusteredDocIds.add(d.id));
@@ -361,17 +428,14 @@ const AIProcessing = () => {
         id: 'group_' + c.cluster_id,
         isGroup: true,
         clusterData: c,
-        // So that rows behave as child rows without breaking keys
         children: c.documents.map(d => ({ ...d, isChild: true }))
       };
     });
-    
+
     // Non-clustered root docs
     const freeDocs = fileList.filter(d => !clusteredDocIds.has(d.id));
-    
-    // Render groups first
     return [...groupRows, ...freeDocs];
-  }, [fileList, clusters]);
+  }, [activeTab, fileList, clusters, archivedGroupedData, groupArchivedToPatientFolders]);
 
   // 如果存在缓存分组，自动拉取患者列表以保证归档操作可用
   useEffect(() => {
@@ -384,6 +448,7 @@ const AIProcessing = () => {
   }, []);
 
   useEffect(() => {
+    setExpandedRowKeys([]); // 切换 Tab 或关键词时收起所有分组
     fetchDocuments();
     fetchTabCounts();
     getSystemConfig().then(res => {
@@ -418,7 +483,7 @@ const AIProcessing = () => {
   };
 
   const baseOnCellForGroup = (record) => {
-    if (record.isGroup) {
+    if (record.isGroup || record.isPatientFolder) {
       return { colSpan: 0 };
     }
     return {};
@@ -433,6 +498,7 @@ const AIProcessing = () => {
       ellipsis: true,
       onCell: (record) => {
          if (record.isGroup) return { colSpan: 6, style: { padding: '8px 16px', background: '#fafafa' } };
+         if (record.isPatientFolder) return { colSpan: 6, style: { padding: '10px 20px', background: '#f0f7ff', borderLeft: '3px solid #1677ff' } };
          return {};
       },
       render: (name, record) => {
@@ -449,11 +515,36 @@ const AIProcessing = () => {
           );
         }
 
+        // 患者文件夹行（已归档 / 全部 Tab）
+        if (record.isPatientFolder) {
+          const isExpanded = expandedRowKeys.includes(record.id);
+          return (
+            <Space size={10} style={{ userSelect: 'none' }}>
+              <RightOutlined style={{
+                fontSize: 11,
+                color: '#8c8c8c',
+                display: 'inline-block',
+                transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                transition: 'transform 0.2s ease',
+                flexShrink: 0,
+              }} />
+              {isExpanded
+                ? <FolderOpenOutlined style={{ color: '#1677ff', fontSize: 18, flexShrink: 0 }} />
+                : <FolderOutlined    style={{ color: '#1677ff', fontSize: 18, flexShrink: 0 }} />
+              }
+              <Text strong style={{ fontSize: 14, color: '#1f1f1f' }}>{record.patientName}</Text>
+              <Tag color="blue" style={{ fontSize: 11, padding: '0 6px', marginLeft: 4 }}>
+                {record.children?.length || 0} 份文档
+              </Tag>
+            </Space>
+          );
+        }
+
         const icon = record.mime_type && record.mime_type.includes('pdf')
           ? <FilePdfOutlined style={{ color: '#e74c3c', fontSize: 16 }} />
           : <FileImageOutlined style={{ color: '#3498db', fontSize: 16 }} />;
         return (
-          <Space size={8} style={{ cursor: 'pointer', paddingLeft: record.isChild ? 0 : 0 }} onClick={() => { setDetailDoc(record); setDetailModalOpen(true); }}>
+          <Space size={8} style={{ cursor: 'pointer' }} onClick={() => { setDetailDoc(record); setDetailModalOpen(true); }}>
             {icon}
             <div>
               <Tooltip title={name}>
@@ -665,8 +756,8 @@ const AIProcessing = () => {
       {/* Main Content Area */}
       <div style={{ padding: '24px', flex: 1, overflow: 'auto' }}>
         
-        {/* Batch Operations Toolbar */}
-        {(selectedRowKeys.length > 0 || clusters.length > 0) && (
+        {/* Batch Operations Toolbar：集群提示只在"全部"和"待归档" Tab 显示 */}
+        {(selectedRowKeys.length > 0 || (clusters.length > 0 && (activeTab === 'all' || activeTab === 'todo'))) && (
           <div style={{ 
             padding: '12px 16px', 
             background: clusters.length > 0 ? '#f6ffed' : '#e6f4ff', 
@@ -694,29 +785,62 @@ const AIProcessing = () => {
         )}
 
         <Table
+          key={activeTab}
           columns={columns}
           dataSource={tableData}
           rowKey="id"
           loading={loading}
           expandable={{
-            defaultExpandAllRows: true,
-            expandIconColumnIndex: 0,
+            // 受控展开：彻底隐藏默认 + 号列，由整行点击 + chevron 动画替代
+            showExpandColumn: false,
+            expandedRowKeys,
+            onExpandedRowsChange: setExpandedRowKeys,
+          }}
+          onRow={(record) => {
+            if (record.isPatientFolder || record.isGroup) {
+              return {
+                style: { cursor: 'pointer' },
+                onClick: (e) => {
+                  // 若点击的是按钮/链接等交互元素则不触发展开，避免误操作
+                  if (e.target.closest('button, a, input, [role="button"]')) return;
+                  setExpandedRowKeys(prev =>
+                    prev.includes(record.id)
+                      ? prev.filter(k => k !== record.id)
+                      : [...prev, record.id]
+                  );
+                },
+              };
+            }
+            return {};
           }}
           rowSelection={{
             selectedRowKeys,
             onChange: setSelectedRowKeys,
             getCheckboxProps: (record) => ({
-              disabled: record.isGroup, 
+              disabled: record.isGroup || record.isPatientFolder,
             }),
           }}
           pagination={{
-            total: total,
+            // 归档/全部 Tab 使用聚合后的根行数分页，避免文件夹展开导致空页
+            total: (activeTab === 'archived' || activeTab === 'all')
+              ? tableData.length
+              : total,
+            defaultPageSize: 100,
             showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 份文档`,
+            pageSizeOptions: ['20', '50', '100', '200'],
+            showTotal: (t) => activeTab === 'archived'
+              ? `共 ${t} 位患者 · ${total} 份文档`
+              : activeTab === 'all'
+              ? `共 ${t} 行（含 ${total} 份文档）`
+              : `共 ${t} 份文档`,
           }}
           size="middle"
           bordered={false}
-          rowClassName={(record) => record.isGroup ? 'expanded-group-row' : 'flat-table-row'}
+          rowClassName={(record) => {
+            if (record.isGroup) return 'expanded-group-row';
+            if (record.isPatientFolder) return 'patient-folder-row';
+            return 'flat-table-row';
+          }}
         />
       </div>
 

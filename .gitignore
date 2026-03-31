@@ -1,8 +1,5 @@
 backend/.env
 .logs/
-__pycache__/
-*.pyc
-*.pyo
 *.pyd
 .Python
 env/
@@ -13,3 +10,13 @@ pip-log.txt
 pip-delete-this-directory.txt
 .DS_Store
 *.sql
+
+# Windows启动脚本
+*.bat
+
+# Python bytecode
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+backend/app/__pycache__/__init__.cpython-312.pyc

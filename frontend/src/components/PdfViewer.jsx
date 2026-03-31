@@ -9,11 +9,13 @@ if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 }
 
-const PdfViewer = ({ url, scale = 1.2, extractedBlocks = [], ocrPageSizes = {}, onInitScale }) => {
+const PdfViewer = ({ url, scale = 1.2, extractedBlocks = [], ocrPageSizes = {}, onInitScale, enableDragPan = false }) => {
   const [pdf, setPdf] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const containerRef = useRef(null);
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef({ x: 0, y: 0, left: 0, top: 0 });
 
   useEffect(() => {
     let active = true;
@@ -59,14 +61,43 @@ const PdfViewer = ({ url, scale = 1.2, extractedBlocks = [], ocrPageSizes = {}, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
+  useEffect(() => {
+    if (!enableDragPan || !isPanning) return undefined;
+    const handleMove = (e) => {
+      if (!containerRef.current) return;
+      const dx = e.clientX - panStartRef.current.x;
+      const dy = e.clientY - panStartRef.current.y;
+      containerRef.current.scrollLeft = panStartRef.current.left - dx;
+      containerRef.current.scrollTop = panStartRef.current.top - dy;
+    };
+    const handleUp = () => setIsPanning(false);
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [enableDragPan, isPanning]);
+
   return (
     <div
       ref={containerRef}
+      onMouseDown={(e) => {
+        if (!enableDragPan || e.button !== 0 || !containerRef.current) return;
+        e.preventDefault();
+        panStartRef.current = {
+          x: e.clientX,
+          y: e.clientY,
+          left: containerRef.current.scrollLeft,
+          top: containerRef.current.scrollTop,
+        };
+        setIsPanning(true);
+      }}
       style={{
         width: '100%',
         height: '100%',
         overflowY: 'auto',
-        overflowX: 'hidden',
+        overflowX: 'auto',
         background: '#e0e0e0',
         display: 'flex',
         flexDirection: 'column',
@@ -74,6 +105,8 @@ const PdfViewer = ({ url, scale = 1.2, extractedBlocks = [], ocrPageSizes = {}, 
         padding: '24px 0',
         boxSizing: 'border-box',
         position: 'relative',
+        cursor: enableDragPan ? (isPanning ? 'grabbing' : 'grab') : 'default',
+        userSelect: enableDragPan ? 'none' : 'auto',
       }}
     >
       {loading && (

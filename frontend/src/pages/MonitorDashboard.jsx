@@ -37,6 +37,7 @@ import PipelineTraceModal from '../components/PipelineTraceModal';
 import CrfTraceCanvas from '../components/CrfTraceCanvas';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import PdfViewer from '../components/PdfViewer';
 
 const MonitorDashboard = () => {
@@ -48,6 +49,9 @@ const MonitorDashboard = () => {
   const [extractionTasks, setExtractionTasks] = useState([]);
   const [crfTasks, setCrfTasks] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [ocrTableLoading, setOcrTableLoading] = useState(false);
+  const [extractionTableLoading, setExtractionTableLoading] = useState(false);
+  const [crfTableLoading, setCrfTableLoading] = useState(false);
 
   // OCR Modal State
   const [ocrModalOpen, setOcrModalOpen] = useState(false);
@@ -119,7 +123,7 @@ const MonitorDashboard = () => {
     setTraceModalOpen(true);
   };
 
-  // Poll backend monitor endpoint
+  // Auto-refresh without loading animation
   const fetchStats = async () => {
     try {
       const res = await getMonitorStats();
@@ -134,12 +138,29 @@ const MonitorDashboard = () => {
     }
   };
 
+  // Initial load with loading animation
   useEffect(() => {
-    setLoading(true);
-    fetchStats().finally(() => setLoading(false));
-    
-    // Auto-refresh every 3 seconds
-    const interval = setInterval(fetchStats, 3000);
+    setOcrTableLoading(true);
+    setExtractionTableLoading(true);
+    setCrfTableLoading(true);
+
+    getMonitorStats().then(res => {
+      if (res && res.data) {
+        setWorkerNodes(res.data.workerNodes || []);
+        setOcrTasks(res.data.ocrTasks || []);
+        setExtractionTasks(res.data.extractionTasks || []);
+        setCrfTasks(res.data.crfTasks || []);
+      }
+    }).catch(e => {
+      console.error('Failed to fetch stats:', e);
+    }).finally(() => {
+      setOcrTableLoading(false);
+      setExtractionTableLoading(false);
+      setCrfTableLoading(false);
+    });
+
+    // Auto-refresh every 10 seconds (without loading animation)
+    const interval = setInterval(fetchStats, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -380,7 +401,7 @@ const MonitorDashboard = () => {
               label: <Badge count={ocrTasks.length} size="small" offset={[10, 0]}><span>⚕️ OCR 识别管道 (Stage 1)</span></Badge>,
               children: (
                 <div style={{ marginTop: 16 }}>
-                  <Table dataSource={ocrTasks} columns={ocrColumns} pagination={false} rowKey="id" size="middle" scroll={{ x: 'max-content' }} />
+                  <Table dataSource={ocrTasks} columns={ocrColumns} pagination={false} rowKey="id" size="middle" scroll={{ x: 'max-content' }} loading={ocrTableLoading} />
                 </div>
               )
             },
@@ -389,7 +410,7 @@ const MonitorDashboard = () => {
               label: <Badge count={extractionTasks.length} size="small" offset={[10, 0]}><span>📖 元数据提取管道 (Stage 2)</span></Badge>,
               children: (
                 <div style={{ marginTop: 16 }}>
-                  <Table dataSource={extractionTasks} columns={extractionColumns} pagination={false} rowKey="id" size="middle" scroll={{ x: 'max-content' }} />
+                  <Table dataSource={extractionTasks} columns={extractionColumns} pagination={false} rowKey="id" size="middle" scroll={{ x: 'max-content' }} loading={extractionTableLoading} />
                 </div>
               )
             },
@@ -398,7 +419,7 @@ const MonitorDashboard = () => {
               label: <Badge dot offset={[5, 0]}><span>🔬 CRF自动推理填充管道 (Stage 3)</span></Badge>,
               children: (
                 <div style={{ marginTop: 16 }}>
-                  <Table dataSource={crfTasks} columns={crfColumns} pagination={false} rowKey="id" size="middle" scroll={{ x: 'max-content' }} />
+                  <Table dataSource={crfTasks} columns={crfColumns} pagination={false} rowKey="id" size="middle" scroll={{ x: 'max-content' }} loading={crfTableLoading} />
                 </div>
               )
             }
@@ -449,7 +470,7 @@ const MonitorDashboard = () => {
                     }}
                     className="ocr-markdown-preview"
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
                         {ocrData.ocr_markdown || '（无识别文本）'}
                       </ReactMarkdown>
                     </div>

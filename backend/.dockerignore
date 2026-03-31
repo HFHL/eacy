@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+*.pyo
+*.log
+*.csv
+*.json           # 不挂载 response.json 等临时响应文件
+.git
+.gitignore
+venv
+.venv
+.env            # 生产环境密钥不要打进镜像
+celery.log
+out*.log
+*.md
+data/            # 不复制宿主机挂载的 data 目录

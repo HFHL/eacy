@@ -121,12 +121,19 @@ const FormTree = ({ schema, crfData, anchorMeta, selectedForm, onSelect, activeF
           key: `form-${ci}-${fi}`,
           formName: form.name,
           title: (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
-              <span style={{ flex: 1, fontSize: 12.5, color: C.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {form.name}
-              </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0 }}>
+              <Tooltip title={form.name} mouseEnterDelay={0.4}>
+                <span style={{
+                  flex: 1, minWidth: 0,
+                  fontSize: 12.5, color: C.textPrimary,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {form.name}
+                </span>
+              </Tooltip>
               <span style={{
                 fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 10,
+                flexShrink: 0, whiteSpace: 'nowrap',
                 background: pct === 100 ? '#dcfce7' : pct > 0 ? '#fef3c7' : '#f3f4f6',
                 color: pct === 100 ? '#16a34a' : pct > 0 ? '#d97706' : '#9ca3af',
               }}>
@@ -143,7 +150,18 @@ const FormTree = ({ schema, crfData, anchorMeta, selectedForm, onSelect, activeF
   const defaultExpanded = treeData.map(cat => cat.key);
 
   return (
-    <div style={{ padding: '12px 0' }}>
+    <div style={{ padding: '12px 0' }} className="crf-form-tree">
+      <style>{`
+        .crf-form-tree .ant-tree .ant-tree-node-content-wrapper {
+          overflow: hidden;
+          min-width: 0;
+        }
+        .crf-form-tree .ant-tree .ant-tree-title {
+          overflow: hidden;
+          min-width: 0;
+          display: block;
+        }
+      `}</style>
       <Tree
         treeData={treeData}
         defaultExpandedKeys={defaultExpanded}
@@ -576,6 +594,22 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
 
   const fields = formSchema.fields || [];
 
+  /* ── 值区域统一外框（字号与二维表单元格保持一致：12.5px）── */
+  const valueBox = {
+    background: '#f8fafc',
+    border: `1px solid ${C.border}`,
+    borderRadius: 6,
+    padding: '5px 10px',
+    marginBottom: 8,
+  };
+  const inputInBox = {
+    padding: 0, margin: 0,
+    fontSize: 12.5,
+    lineHeight: '22px',
+    color: C.textPrimary,
+    background: 'transparent',
+  };
+
   return (
     <div>
       <div style={{
@@ -690,18 +724,18 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                 setActiveField({ name: field.name, sourceBlocks: firstDocBlocks, value: val, _docIdx: 0 });
               }}
               style={{
-                display: 'flex', alignItems: 'flex-start',
-                padding: '10px 20px',
+                display: 'flex', alignItems: 'center',
+                padding: '8px 20px',
                 borderBottom: `1px solid ${C.border}`,
                 background: activeField?.name === field.name ? '#eef2ff' : (idx % 2 === 0 ? '#fff' : '#fafbfd'),
                 transition: 'background 0.2s',
               }}
             >
-              <div style={{ width: 180, flexShrink: 0, paddingRight: 12 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 500, color: C.textPrimary }}>
+              <div style={{ width: 176, flexShrink: 0, paddingRight: 16, alignSelf: 'flex-start', paddingTop: 6 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 500, color: C.textSecondary }}>
                   {field.name}
                   {field.required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
-                </div>
+                </span>
               </div>
               <div style={{ flex: 1 }}>
                 {filled ? (
@@ -734,25 +768,28 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                         />
                       </div>
                     ) : field.type === 'multirow' ? (
-                      <div style={{ marginBottom: 8 }}>
+                      /* multirow：每组子字段用同一个外框包裹，行间虚线分隔 */
+                      <div style={{ ...valueBox, padding: 0, overflow: 'hidden' }}>
                         {(Array.isArray(val) && val.length > 0 ? val : [{}]).map((row, ri, arr) => (
                           <div key={ri} style={{
-                            padding: '8px 4px',
+                            padding: '8px 12px',
                             borderBottom: ri < arr.length - 1 ? `1px dashed ${C.border}` : 'none',
-                            marginBottom: ri < arr.length - 1 ? 4 : 0,
                           }}>
                             {(field.sub_fields || Object.keys(row || {})).map(col => {
                               const k = typeof col === 'string' ? col : col.name;
                               const currentCell = row ? row[k] : undefined;
                               const cellVal = currentCell && typeof currentCell === 'object' && 'value' in currentCell ? currentCell.value : currentCell;
-
                               return (
-                                <div key={k} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6, paddingRight: 32 }}>
-                                  <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0, minWidth: 70, textAlign: 'right', paddingTop: 2 }}>{k}:</span>
+                                <div key={k} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 4 }}>
+                                  <span style={{
+                                    fontSize: 12.5, color: C.textSecondary, fontWeight: 500,
+                                    flexShrink: 0, width: 88, paddingTop: 3, lineHeight: '22px',
+                                  }}>{k}</span>
+                                  <div style={{ width: 1, background: C.border, alignSelf: 'stretch', flexShrink: 0, margin: '3px 0' }} />
                                   <Input.TextArea
-                                    bordered={false}
+                                    variant="borderless"
                                     autoSize={{ minRows: 1 }}
-                                    style={{ padding: 0, margin: 0, fontSize: 12.5, color: C.textPrimary }}
+                                    style={{ ...inputInBox, flex: 1 }}
                                     value={cellVal !== undefined && cellVal !== null ? String(cellVal) : ''}
                                     onChange={e => updateCellValue(field.name, ri, k, e.target.value)}
                                     placeholder={`输入 ${k}`}
@@ -764,11 +801,12 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                         ))}
                       </div>
                     ) : field.type === 'enum' ? (
-                      <div style={{ marginBottom: 8 }}>
+                      /* enum：外框 + Select 无边框 */
+                      <div style={valueBox}>
                         <Select
-                          bordered={false}
+                          variant="borderless"
                           value={val !== undefined && val !== null ? String(val) : undefined}
-                          style={{ width: '100%', fontSize: 12.5 }}
+                          style={{ width: '100%', fontSize: 12.5, margin: '-2px -8px', minHeight: 22 }}
                           onChange={v => updateCellValue(field.name, undefined, undefined, v)}
                           options={(field.enum || []).map(o => ({ label: o, value: o }))}
                           allowClear
@@ -776,11 +814,12 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                         />
                       </div>
                     ) : (
-                      <div style={{ marginBottom: 8 }}>
+                      /* 普通文本 / 日期 */
+                      <div style={valueBox}>
                         <Input.TextArea
-                          bordered={false}
+                          variant="borderless"
                           autoSize={{ minRows: 1, maxRows: 6 }}
-                          style={{ padding: 0, margin: 0, fontSize: 12.5, color: C.textPrimary }}
+                          style={inputInBox}
                           value={val !== undefined && val !== null ? String(val) : ''}
                           onChange={e => updateCellValue(field.name, undefined, undefined, e.target.value)}
                           placeholder="输入内容"
@@ -838,7 +877,9 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                     })()}
                   </>
                 ) : (
-                  <span style={{ color: C.textDim, fontSize: 12, fontStyle: 'italic' }}>—— 未提取</span>
+                  <div style={{ ...valueBox, background: '#fafafa' }}>
+                    <span style={{ fontSize: 12.5, color: C.textDim, fontStyle: 'italic' }}>未提取</span>
+                  </div>
                 )}
               </div>
               <div style={{ width: 28, flexShrink: 0, textAlign: 'center' }}>
@@ -860,6 +901,8 @@ const DocumentImageViewer = ({ docUrl, extractedBlocks, docName, mimeType, origi
   const containerRef = useRef(null);
   const [scale, setScale] = useState(0);
   const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
+  const [isImagePanning, setIsImagePanning] = useState(false);
+  const imagePanStartRef = useRef({ x: 0, y: 0, left: 0, top: 0 });
 
   const isPdf =
     mimeType?.includes('pdf') ||
@@ -881,6 +924,24 @@ const DocumentImageViewer = ({ docUrl, extractedBlocks, docName, mimeType, origi
   };
 
   const drawScale = scale || (isPdf ? 1.0 : 0.5);
+
+  useEffect(() => {
+    if (!isImagePanning) return undefined;
+    const handleMove = (e) => {
+      if (!containerRef.current) return;
+      const dx = e.clientX - imagePanStartRef.current.x;
+      const dy = e.clientY - imagePanStartRef.current.y;
+      containerRef.current.scrollLeft = imagePanStartRef.current.left - dx;
+      containerRef.current.scrollTop = imagePanStartRef.current.top - dy;
+    };
+    const handleUp = () => setIsImagePanning(false);
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [isImagePanning]);
 
   return (
     <div style={{ marginBottom: 12, border: `1px solid ${C.border}`, borderRadius: 6, overflow: 'hidden', background: '#e5e7eb', display: 'flex', flexDirection: 'column' }}>
@@ -908,8 +969,28 @@ const DocumentImageViewer = ({ docUrl, extractedBlocks, docName, mimeType, origi
           </Tag>
         </div>
       </div>
-
-      <div ref={containerRef} style={{ width: '100%', position: 'relative', overflow: isPdf ? 'hidden' : 'auto', height: 600 }}>
+      <div
+        ref={containerRef}
+        onMouseDown={(e) => {
+          if (isPdf || e.button !== 0 || !containerRef.current) return;
+          e.preventDefault();
+          imagePanStartRef.current = {
+            x: e.clientX,
+            y: e.clientY,
+            left: containerRef.current.scrollLeft,
+            top: containerRef.current.scrollTop,
+          };
+          setIsImagePanning(true);
+        }}
+        style={{
+          width: '100%',
+          position: 'relative',
+          overflow: isPdf ? 'hidden' : 'auto',
+          height: 600,
+          cursor: isPdf ? 'default' : (isImagePanning ? 'grabbing' : 'grab'),
+          userSelect: isPdf ? 'auto' : 'none',
+        }}
+      >
         {isPdf ? (
           <PdfViewer
             url={docUrl}
@@ -917,6 +998,7 @@ const DocumentImageViewer = ({ docUrl, extractedBlocks, docName, mimeType, origi
             extractedBlocks={extractedBlocks}
             ocrPageSizes={ocrPageSizes}
             onInitScale={(s) => setScale(s)}
+            enableDragPan
           />
         ) : (
           <div style={{

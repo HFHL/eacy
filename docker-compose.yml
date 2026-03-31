@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # ── 后端服务（Flask API）──────────────────────────────
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    command: python -m flask run --host=0.0.0.0 --port=5001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: postgresql://postgres:27vo99m8wr5hlwhy@host.docker.internal:5433/eacy_db
+      REDIS_URL: redis://host.docker.internal:6379/0
+      FLASK_ENV: development
+    volumes:
+      # 源码目录挂载，实现宿主机改文件 → 容器内热重载
+      - ./backend:/app
+    ports:
+      - "5001:5001"
+
+  # ── Celery Worker 服务（异步任务）─────────────────────
+  celery:
+    build: ./backend
+    restart: unless-stopped
+    command: celery -A celery_worker.celery worker --loglevel=info
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: postgresql://postgres:27vo99m8wr5hlwhy@host.docker.internal:5433/eacy_db
+      REDIS_URL: redis://host.docker.internal:6379/0
+      FLASK_ENV: development
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - backend
+
+  # ── 前端服务（Vite Dev Server）────────────────────────
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    volumes:
+      # 源码目录挂载，实现宿主机改文件 → Vite HMR 即时更新
+      - ./frontend:/app
+      # 禁止 node_modules 被宿主机覆盖，保持容器内安装的包
+      - /app/node_modules
+    depends_on:
+      - backend
+    ports:
+      - "5174:5173"
