@@ -6,6 +6,7 @@ python-dotenv==1.0.1
 passlib==1.7.4
 celery==5.4.0
 redis==5.0.3
+oss2==2.18.4
 alibabacloud_sts20150401
 alibabacloud_credentials
-google-adk
+google-adk[extensions]

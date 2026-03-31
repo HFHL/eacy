@@ -209,7 +209,7 @@ def get_active_tasks():
             "status": st,
             "file_name": t.document_name or f"患者 {t.patient_id[:8]} 记录" if t.patient_id else "未知文件",
             "created_at": t.created_at.isoformat() if t.created_at else None,
-            "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+            "updated_at": t.created_at.isoformat() if t.created_at else None,
             "project_id": t.project_id
         })
         

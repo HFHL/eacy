@@ -8,3 +8,4 @@ __pycache__/
 **/__pycache__/
 *.pyc
 *.pyo
+backend/app/__pycache__/__init__.cpython-312.pyc

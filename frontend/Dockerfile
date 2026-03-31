@@ -4,7 +4,7 @@ WORKDIR /app
 
 # 先复制 package.json，再安装依赖（利用 Docker 缓存层）
 COPY package.json ./
-RUN npm install
+RUN npm install --registry https://registry.npmmirror.com
 
 # 复制其余源码
 COPY . .
