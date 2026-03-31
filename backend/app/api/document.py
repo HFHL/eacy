@@ -3,6 +3,7 @@ import uuid
 from flask import Blueprint, request, jsonify, current_app
 from ..models.document import Document
 from ..extensions import db
+from .auth_utils import get_current_user_id
 import oss2
 
 document_bp = Blueprint('document', __name__)
@@ -83,7 +84,7 @@ def register_oss_document():
     if not data or not data.get('oss_url') or not data.get('filename'):
         return jsonify({"success": False, "message": "缺失文件核心属性 (url/filename)"}), 400
         
-    uploader_id = int(request.headers.get("X-User-Id", 1))
+    uploader_id = get_current_user_id() or 1
     doc_id = str(uuid.uuid4())
     
     new_doc = Document(
@@ -124,8 +125,8 @@ def list_documents():
     - task_status: 按状态筛选，多个用逗号分隔（如 uploaded,parsing,archived）
     - keyword: 按文件名模糊搜索
     """
-    user_id = int(request.headers.get('X-User-Id', 1))
-    
+    user_id = get_current_user_id() or 1
+
     # 基础查询
     query = Document.query.filter_by(is_deleted=False, uploader_id=user_id)
     
@@ -236,7 +237,7 @@ def list_documents():
 @document_bp.route('/<doc_id>', methods=['DELETE'])
 def delete_document(doc_id):
     """软删除指定文档（带有用户鉴权租户隔离）"""
-    user_id = int(request.headers.get('X-User-Id', 1))
+    user_id = get_current_user_id() or 1
     doc = Document.query.filter_by(id=doc_id, uploader_id=user_id).first()
     
     if not doc:

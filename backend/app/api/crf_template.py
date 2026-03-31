@@ -4,6 +4,7 @@ CRF 模版 API
 from flask import Blueprint, request, jsonify
 from ..extensions import db
 from ..models.crf_template import CrfTemplate, CrfTemplateVersion
+from .auth_utils import get_current_user_id
 
 crf_template_bp = Blueprint('crf_template', __name__)
 
@@ -22,7 +23,7 @@ def create_template():
     if not data or not data.get('template_name'):
         return jsonify({"success": False, "message": "模版名称不能为空"}), 400
 
-    creator_id_raw = request.headers.get('X-User-Id') or data.get('creator_id')
+    creator_id_raw = get_current_user_id() or data.get('creator_id')
     creator_id = int(creator_id_raw) if creator_id_raw else None
 
     # 同一用户下模版不允许重名
