@@ -1,7 +1,7 @@
 import React from 'react';
 import { Form, Input, Button, Checkbox, message } from 'antd';
 import { MailOutlined, LockOutlined, ArrowRightOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 import axios from 'axios';
 
@@ -125,6 +125,13 @@ const Login = () => {
             </Form.Item>
           </Form>
         </div>
+
+        <div style={styles.registerPrompt}>
+          还没有账号？
+          <Link to="/register" style={styles.registerLink}>
+            立即注册
+          </Link>
+        </div>
       </div>
     </div>
   );
@@ -153,6 +160,8 @@ const styles = {
   formOptions: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   forgotLink: { color: '#1890ff' },
   loginButton: { height: 44, fontSize: 16, background: '#1890ff' },
+  registerPrompt: { textAlign: 'center', fontSize: 14, color: '#8c8c8c', marginTop: 20 },
+  registerLink: { color: '#1890ff', marginLeft: 4, fontWeight: 500 },
 };
 
 export default Login;

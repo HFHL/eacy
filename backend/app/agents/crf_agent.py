@@ -48,16 +48,55 @@ def _parse_json_from_text(text: str) -> dict:
             pass
     return {}
 
+import time
+import asyncio
+import redis
+
+# 连接本地 Redis
+redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+
+# ==========================================
+# 基于 Redis 的全局严格时间间隔限流器 (跨 Celery Worker)
+# ==========================================
+class RedisIntervalLimiter:
+    def __init__(self, interval: float, lock_key: str = "llm_global_interval_lock"):
+        self.interval = interval
+        self.lock_key = lock_key
+
+    async def acquire(self):
+        """
+        尝试获取一个有效期为 interval 的 Redis 锁。
+        如果获取到了，代表此间隔段内本进程被允许发请求；
+        否则被其他 Worker 抢走了，就睡眠重试，直到下一个间隔。
+        """
+        while True:
+            # px (毫秒) 为强制定制的冷却间隔
+            success = redis_client.set(self.lock_key, "1", nx=True, px=int(self.interval * 1000))
+            if success:
+                return
+            await asyncio.sleep(0.5)
+
+# 强行设置：所有大模型请求之间，全局跨进程严格执行至少 2.0 秒间隔
+global_rate_limiter = RedisIntervalLimiter(interval=2.0)
+
+class RateLimitedLiteLlm(LiteLlm):
+    """一个注入了 TPS 拦截器的 LiteLlm 装饰类"""
+    async def generate_content_async(self, llm_request, stream=False):
+        await global_rate_limiter.acquire()
+        async for chunk in super().generate_content_async(llm_request, stream):
+            yield chunk
+
 def get_llm_model():
     model_name = os.getenv("OPENAI_MODEL", "MiniMax-M2.7")
     api_base = os.getenv("OPENAI_API_BASE_URL", "https://api.minimaxi.com/v1")
     api_key = os.getenv("OPENAI_API_KEY", "")
     
-    return LiteLlm(
+    return RateLimitedLiteLlm(
         model=f"openai/{model_name}",
         api_base=api_base,
         api_key=api_key
     )
+
 
 
 # ==========================================
@@ -209,13 +248,13 @@ class DynamicExtractionRouter(BaseAgent):
             )
             return
             
-        # 压入并行的引擎提速触发LLMs
-        parallel_runner = ParallelAgent(
-            name="parallel_extractor", 
+        # 改为串行引擎，避免瞬时并发过高触发 MiniMax Token Plan 的 429 RateLimitError
+        sequential_runner = SequentialAgent(
+            name="sequential_extractor", 
             sub_agents=extraction_agents
         )
         
-        async for event in parallel_runner.run_async(ctx):
+        async for event in sequential_runner.run_async(ctx):
             yield event
 
 # ==========================================

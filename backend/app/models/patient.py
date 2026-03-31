@@ -22,6 +22,9 @@ class Patient(db.Model):
     # 冗余计数
     document_count = db.Column(db.Integer, nullable=False, default=0)
 
+    # 所有者（上传/创建该患者的用户 ID），用于多用户数据隔离
+    uploader_id = db.Column(db.Integer, nullable=True, default=1)
+
     is_deleted = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

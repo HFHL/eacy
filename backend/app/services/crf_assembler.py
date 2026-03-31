@@ -5,11 +5,17 @@ CRF 视图组装器
 替代原来的 ProjectPatient.crf_data 可变快照。
 
 规则:
-  1. 对每个 (form_name, field_name)，优先取 is_adopted=True 的记录
-  2. 如无 adopted，取 created_at 最新的一条
-  3. 返回与原 crf_data 完全相同的结构: {"表单": {"字段": {"value": ..., "source_blocks": [...]}, ...}, ...}
+  1. 对不可重复表单（anchor_fields=[]）: 按 (form_name, field_name) 分组
+     - 优先取 is_adopted=True 的记录，否则取最新一条
+  2. 对可重复表单（anchor_fields 非空）: 按 (form_name, anchor_value) 分别实例化
+     - 每个实例的 display key 为 "form_name__anchor_value"
+     - 无锚点值的记录（LLM 未能提取锚点）退化为 form_name 单实例
+  3. table 字段: 跨记录合并行（去重 + 移除子集行）
+  4. 返回结构: {"表单key": {"字段": {"value": ..., "source_blocks": [...]}, ...}, ...}
+     附加: {"_anchor_meta": {"表单名": [{"anchor_value": "...", "display_key": "..."}]}}
 """
-from sqlalchemy import func, case, desc
+from collections import defaultdict
+from sqlalchemy import desc
 from ..extensions import db
 from ..models.crf_field_extraction import CrfFieldExtraction
 
@@ -54,24 +60,48 @@ def _remove_subset_rows(rows):
     return keep
 
 
+def _build_schema_indexes(template_schema):
+    """从模板 schema 构建两个索引。
+
+    Returns:
+        anchor_form_map: {form_name: [anchor_field_name, ...]}
+        field_type_map:  {(form_name, field_name): field_type}
+    """
+    anchor_form_map = {}
+    field_type_map = {}
+    if not template_schema:
+        return anchor_form_map, field_type_map
+
+    for cat in template_schema.get("categories", []):
+        for form in cat.get("forms", []):
+            fn = form.get("name", "")
+            af = form.get("anchor_fields", [])
+            if af:
+                anchor_form_map[fn] = af
+            for field in form.get("fields", []):
+                field_type_map[(fn, field.get("name", ""))] = field.get("type", "text")
+
+    return anchor_form_map, field_type_map
+
+
 def assemble_crf_view(project_id: str, patient_id: str, template_schema: dict = None) -> dict:
     """
     从 CrfFieldExtraction 实时组装 CRF 当前视图。
 
-    标量/multirow 字段: adopted 优先，否则取最新一条。
+    不可重复表单: adopted 优先，否则取最新一条。
+    可重复表单: 按 anchor_value 分组为独立实例，display_key = "form_name__anchor_value"。
     table 字段: 合并所有记录的行，按 display value 去重，移除子集行。
 
     Returns:
-        dict: {"表单名": {"字段名": {"value": ..., "source_blocks": [...]}, ...}, ...}
+        dict: {
+            "表单名": {"字段名": {"value": ..., "source_blocks": [...]}, ...},
+            "表单名__锚点值": {...},
+            "_anchor_meta": {
+                "表单名": [{"anchor_value": "锚点值", "display_key": "表单名__锚点值"}, ...]
+            }
+        }
     """
-    # 构建字段类型索引: (form_name, field_name) -> type
-    field_type_map = {}
-    if template_schema:
-        for cat in template_schema.get("categories", []):
-            for form in cat.get("forms", []):
-                fn = form.get("name", "")
-                for field in form.get("fields", []):
-                    field_type_map[(fn, field.get("name", ""))] = field.get("type", "text")
+    anchor_form_map, field_type_map = _build_schema_indexes(template_schema)
 
     records = CrfFieldExtraction.query.filter_by(
         project_id=project_id,
@@ -83,20 +113,34 @@ def assemble_crf_view(project_id: str, patient_id: str, template_schema: dict = 
         CrfFieldExtraction.created_at.desc()
     ).all()
 
-    from collections import defaultdict
+    # 分组: (form_name, anchor_value, field_name) -> [records]
     grouped = defaultdict(list)
     for r in records:
-        grouped[(r.form_name, r.field_name)].append(r)
+        grouped[(r.form_name, r.anchor_value, r.field_name)].append(r)
 
     crf_view = {}
-    for (form_name, field_name), recs in grouped.items():
-        if form_name not in crf_view:
-            crf_view[form_name] = {}
+    anchor_meta = {}  # form_name -> list of {"anchor_value": ..., "display_key": ...}
+
+    for (form_name, anchor_value, field_name), recs in grouped.items():
+        # 计算 display_key：有锚点则以 __ 分隔，否则用 form_name 本身
+        if anchor_value and form_name in anchor_form_map:
+            display_key = f"{form_name}__{anchor_value}"
+            # 汇总锚点元数据
+            if form_name not in anchor_meta:
+                anchor_meta[form_name] = []
+            entry = {"anchor_value": anchor_value, "display_key": display_key}
+            if entry not in anchor_meta[form_name]:
+                anchor_meta[form_name].append(entry)
+        else:
+            display_key = form_name
+
+        if display_key not in crf_view:
+            crf_view[display_key] = {}
 
         # adopted 优先
         adopted = next((r for r in recs if r.is_adopted), None)
         if adopted:
-            crf_view[form_name][field_name] = {
+            crf_view[display_key][field_name] = {
                 "value": adopted.extracted_value,
                 "source_blocks": adopted.source_blocks or [],
             }
@@ -123,18 +167,23 @@ def assemble_crf_view(project_id: str, patient_id: str, template_schema: dict = 
                         if isinstance(sb, dict) and sb.get("bbox"):
                             merged_blocks.append(sb)
 
-            crf_view[form_name][field_name] = {
+            crf_view[display_key][field_name] = {
                 "value": _remove_subset_rows(merged_rows),
                 "source_blocks": merged_blocks or (recs[0].source_blocks or []),
             }
         else:
             # 标量 / multirow: 取最新一条
             latest = recs[0]
-            crf_view[form_name][field_name] = {
+            crf_view[display_key][field_name] = {
                 "value": latest.extracted_value,
                 "source_blocks": latest.source_blocks or [],
             }
 
+    # 对 anchor_meta 中的实例按锚点值排序（方便前端按时间顺序展示）
+    for form_name in anchor_meta:
+        anchor_meta[form_name].sort(key=lambda x: x["anchor_value"])
+
+    crf_view["_anchor_meta"] = anchor_meta
     return crf_view
 
 
@@ -143,14 +192,20 @@ def assemble_crf_view_light(project_id: str, patient_id: str, template_schema: d
     轻量版: 只返回 value，不返回 source_blocks，用于列表展示。
 
     Returns:
-        dict: {"表单名": {"字段名": value, ...}, ...}
+        dict: {
+            "表单名": {"字段名": value, ...},
+            "表单名__锚点值": {...},
+            "_anchor_meta": {...}
+        }
     """
     full = assemble_crf_view(project_id, patient_id, template_schema)
+    anchor_meta = full.pop("_anchor_meta", {})
     light = {}
-    for form_name, fields in full.items():
-        light[form_name] = {}
+    for form_key, fields in full.items():
+        light[form_key] = {}
         for field_name, entry in fields.items():
-            light[form_name][field_name] = entry.get("value")
+            light[form_key][field_name] = entry.get("value")
+    light["_anchor_meta"] = anchor_meta
     return light
 
 
@@ -158,20 +213,23 @@ def compute_extraction_status(project_id: str, patient_id: str, template_schema:
     """
     计算抽取完成度 — 从 CrfFieldExtraction 表统计。
 
+    对不可重复表单按字段数统计；
+    对可重复表单只统计「是否有至少一个实例」（不因实例数膨胀分母）。
+
     Returns:
         dict: {"total_fields": int, "filled_fields": int, "progress": float}
     """
     total_fields = 0
     filled_field_keys = set()
 
-    # 统计模版中的总字段数
+    # 统计模版中的总字段数（以模板字段数为基准，不因实例数翻倍）
     for cat in template_schema.get("categories", []):
         for form in cat.get("forms", []):
             form_name = form.get("name", "")
             for field in form.get("fields", []):
                 total_fields += 1
 
-    # 统计已有记录的字段数（去重）
+    # 统计已有记录的 (form_name, field_name) 组合（去重，忽略 anchor_value）
     existing = db.session.query(
         CrfFieldExtraction.form_name,
         CrfFieldExtraction.field_name

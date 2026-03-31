@@ -28,6 +28,16 @@ const MainLayout = () => {
   const location = useLocation();
   const { token } = theme.useToken();
 
+  // 读取当前登录用户信息
+  const currentUser = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('eacy_user') || 'null');
+    } catch {
+      return null;
+    }
+  })();
+  const displayName = currentUser?.name || currentUser?.email || 'Admin';
+
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
@@ -120,6 +130,9 @@ const MainLayout = () => {
       label: '退出登录',
       danger: true,
       onClick: () => {
+        localStorage.removeItem('eacy_token');
+        localStorage.removeItem('eacy_user');
+        localStorage.removeItem('eacy_ai_archive_clusters');
         navigate('/login');
       }
     },
@@ -258,7 +271,7 @@ const MainLayout = () => {
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
               <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                 <Avatar size="small" icon={<UserOutlined />} style={{ backgroundColor: '#1890ff', marginRight: 8 }} />
-                <Text>Admin</Text>
+                <Text>{displayName}</Text>
               </div>
             </Dropdown>
           </Space>

@@ -16,7 +16,7 @@ class CrfFieldExtraction(db.Model):
     __table_args__ = (
         db.Index(
             'ix_crf_field_lookup',
-            'project_id', 'patient_id', 'form_name', 'field_name'
+            'project_id', 'patient_id', 'form_name', 'field_name', 'anchor_value'
         ),
     )
 
@@ -30,6 +30,9 @@ class CrfFieldExtraction(db.Model):
     # CRF 定位
     form_name = db.Column(db.String(200), nullable=False)
     field_name = db.Column(db.String(200), nullable=False)
+    # 锚点值: 用于区分可重复表单的不同实例（如"2024-01-15"）。
+    # None 表示该表单不可重复，或本次抽取未能提取到锚点值（退化为单实例）。
+    anchor_value = db.Column(db.String(200), nullable=True, index=True)
 
     # 抽取结果
     extracted_value = db.Column(db.JSON().with_variant(JSONB, 'postgresql'), nullable=True)
@@ -51,6 +54,7 @@ class CrfFieldExtraction(db.Model):
             "document_id": self.document_id,
             "form_name": self.form_name,
             "field_name": self.field_name,
+            "anchor_value": self.anchor_value,
             "extracted_value": self.extracted_value,
             "source_blocks": self.source_blocks,
             "merge_action": self.merge_action,

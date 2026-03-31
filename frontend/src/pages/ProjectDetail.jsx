@@ -30,6 +30,9 @@ const ProjectDetail = () => {
   const [fieldModal, setFieldModal] = useState({ open: false, data: null, title: '', loading: false });
   const [traceTarget, setTraceTarget] = useState(null); // { documentId, fileName }
 
+  const [selectedMainRowKeys, setSelectedMainRowKeys] = useState([]);
+  const [removingPatients, setRemovingPatients] = useState(false);
+
   const fetchProject = async () => {
     setProjectLoading(true);
     try {
@@ -135,20 +138,36 @@ const ProjectDetail = () => {
     }
   };
 
+  const handleRemovePatients = async () => {
+    if (selectedMainRowKeys.length === 0) {
+      message.warning('请至少选择一位患者进行移除');
+      return;
+    }
+    setRemovingPatients(true);
+    try {
+      const res = await api.delete(`/projects/${id}/patients`, { data: { patient_ids: selectedMainRowKeys } });
+      if (res?.success) {
+        message.success('已成功从项目中移除所选受试者');
+        setSelectedMainRowKeys([]);
+        fetchPatients(1);
+        fetchProject();
+      } else {
+        message.error(res?.message || '移除受试者失败');
+      }
+    } catch (e) {
+      message.error('网络错误，无法移除受试者');
+    } finally {
+      setRemovingPatients(false);
+    }
+  };
+
   const handleBatchExtract = async (force = false) => {
     setExtracting(true);
     try {
       const res = await api.post(`/projects/${id}/extract`, { force });
       if (res?.success || res?.status === 'success') {
         if (res.dispatched_patients === 0 && !force) {
-          Modal.confirm({
-            title: '所有文档已完成抽取',
-            content: `${res.skipped_documents || 0} 个文档已有成功记录。是否强制重新抽取？`,
-            okText: '强制重新抽取',
-            cancelText: '取消',
-            okButtonProps: { danger: true },
-            onOk: () => handleBatchExtract(true),
-          });
+          message.info('当前没有需要抽取的空表单，所有患者的表单已全部完成填报。');
         } else {
           message.success(res?.message || '批量抽取任务下发成功');
           setPollingActive(true);
@@ -479,7 +498,24 @@ const ProjectDetail = () => {
             loading={extracting}
             onClick={() => handleBatchExtract(false)}
           >
-            批量抽取数据
+            抽取空表单
+          </Button>
+          <Button 
+            icon={<ReloadOutlined />} 
+            disabled={!project.crf_template_id}
+            loading={extracting}
+            onClick={() => {
+              Modal.confirm({
+                title: '危险操作：清空并强制重新抽取',
+                content: '强制重抽将删除目前各患者表单内已抽取的结构化数据及校验痕迹，完全重新进行 AI 解析。确定要对整批文档执行吗？',
+                okText: '确认强制重抽',
+                cancelText: '取消',
+                okButtonProps: { danger: true },
+                onOk: () => handleBatchExtract(true),
+              });
+            }}
+          >
+            强制重新抽
           </Button>
           <Button icon={<DownloadOutlined />}>导出科研数据集</Button>
         </Space>
@@ -534,12 +570,34 @@ const ProjectDetail = () => {
         bordered={false}
         extra={
           <Space>
+            {selectedMainRowKeys.length > 0 && (
+              <Button 
+                danger 
+                loading={removingPatients} 
+                onClick={() => {
+                  Modal.confirm({
+                    title: '移除受试者',
+                    content: `确定要从当前项目中移除选中的 ${selectedMainRowKeys.length} 名受试者吗？这不会删除他们的原始档案，你可以随时将他们重新添加入组。`,
+                    onOk: handleRemovePatients,
+                    okButtonProps: { danger: true },
+                    okText: '确认移除',
+                    cancelText: '取消'
+                  });
+                }}
+              >
+                移除选中 ({selectedMainRowKeys.length})
+              </Button>
+            )}
             <Button icon={<UserAddOutlined />} type="primary" onClick={showAddPatientModal}>添加受试者</Button>
             <Button icon={<ReloadOutlined />} type="text" onClick={() => fetchPatients(pagination.current)} />
           </Space>
         }
       >
         <Table
+          rowSelection={{
+            selectedRowKeys: selectedMainRowKeys,
+            onChange: setSelectedMainRowKeys,
+          }}
           columns={dynamicColumns}
           dataSource={patients}
           rowKey="id"

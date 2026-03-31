@@ -5,15 +5,17 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Breadcrumb, Tree, Tag, Spin, Empty, Tooltip, Badge, message, Timeline, Button, Modal, Table, Input, Select, Space
+  Breadcrumb, Tree, Tag, Spin, Empty, Tooltip, Badge, message, Timeline, Button, Modal, Table, Input, Select, Space, Upload, Progress, Divider
 } from 'antd';
 import {
   ArrowLeftOutlined, FileTextOutlined, CheckCircleOutlined,
   CloseCircleOutlined, BranchesOutlined, FileSearchOutlined,
-  ZoomInOutlined, ZoomOutOutlined, ExpandOutlined, CopyOutlined, QuestionCircleOutlined, DownloadOutlined
+  ZoomInOutlined, ZoomOutOutlined, ExpandOutlined, CopyOutlined, QuestionCircleOutlined, DownloadOutlined,
+  UploadOutlined, InboxOutlined, LoadingOutlined
 } from '@ant-design/icons';
 import PdfViewer from '../components/PdfViewer';
-import api, { extractFromDocument } from '../api/document';
+import api, { extractFromDocument, uploadForFormExtract, getUploadSignature, reportUploadCallback } from '../api/document';
+import OSS from 'ali-oss';
 
 /* ─── Color Tokens ──────────────────────────── */
 const C = {
@@ -32,7 +34,7 @@ const C = {
 };
 
 /* ─── Left Panel: Form Tree ────────────────── */
-const FormTree = ({ schema, crfData, selectedForm, onSelect, activeField, setActiveField }) => {
+const FormTree = ({ schema, crfData, anchorMeta, selectedForm, onSelect, activeField, setActiveField }) => {
   const treeData = useMemo(() => {
     const categories = schema?.categories || [];
     return categories.map((cat, ci) => ({
@@ -43,7 +45,69 @@ const FormTree = ({ schema, crfData, selectedForm, onSelect, activeField, setAct
         </span>
       ),
       selectable: false,
-      children: (cat.forms || []).map((form, fi) => {
+      children: (cat.forms || []).flatMap((form, fi) => {
+        const isRepeatable = form.anchor_fields?.length > 0;
+
+        if (isRepeatable) {
+          // 可重复表单：按锚点实例展开
+          const instances = anchorMeta?.[form.name] || [];
+
+          if (instances.length === 0) {
+            // 无实例：占位节点
+            return [{
+              key: `form-${ci}-${fi}-empty`,
+              formName: form.name,
+              isPlaceholder: true,
+              title: (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+                  <span style={{ flex: 1, fontSize: 12.5, color: C.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {form.name}
+                    <span style={{ fontSize: 10, color: '#d1d5db', marginLeft: 4 }}>(—)</span>
+                  </span>
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 10, background: '#f3f4f6', color: '#9ca3af' }}>
+                    0%
+                  </span>
+                </div>
+              ),
+            }];
+          }
+
+          // 为每个实例生成一个节点
+          return instances.map((inst, ii) => {
+            const displayKey = inst.display_key;
+            const anchorVal = inst.anchor_value;
+            const formData = crfData?.[displayKey] || {};
+            const totalFields = (form.fields || []).length;
+            const filledFields = (form.fields || []).filter(f => {
+              const valRaw = formData[f.name];
+              const val = valRaw && typeof valRaw === 'object' && 'value' in valRaw ? valRaw.value : valRaw;
+              return val !== undefined && val !== null && String(val).trim() !== '';
+            }).length;
+            const pct = totalFields > 0 ? Math.round(filledFields / totalFields * 100) : 0;
+
+            return {
+              key: `form-${ci}-${fi}-${ii}`,
+              formName: displayKey,  // 完整 key，如 "血常规检查__2024-01-15"
+              title: (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+                  <span style={{ flex: 1, fontSize: 12.5, color: C.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {form.name}
+                    <span style={{ fontSize: 10, color: C.textSecondary, marginLeft: 4 }}>({anchorVal})</span>
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 10,
+                    background: pct === 100 ? '#dcfce7' : pct > 0 ? '#fef3c7' : '#f3f4f6',
+                    color: pct === 100 ? '#16a34a' : pct > 0 ? '#d97706' : '#9ca3af',
+                  }}>
+                    {pct}%
+                  </span>
+                </div>
+              ),
+            };
+          });
+        }
+
+        // 不可重复表单：原有逻辑
         const formData = crfData?.[form.name] || {};
         const totalFields = (form.fields || []).length;
         const filledFields = (form.fields || []).filter(f => {
@@ -52,8 +116,8 @@ const FormTree = ({ schema, crfData, selectedForm, onSelect, activeField, setAct
           return val !== undefined && val !== null && String(val).trim() !== '';
         }).length;
         const pct = totalFields > 0 ? Math.round(filledFields / totalFields * 100) : 0;
-        
-        return {
+
+        return [{
           key: `form-${ci}-${fi}`,
           formName: form.name,
           title: (
@@ -70,10 +134,10 @@ const FormTree = ({ schema, crfData, selectedForm, onSelect, activeField, setAct
               </span>
             </div>
           ),
-        };
+        }];
       }),
     }));
-  }, [schema, crfData]);
+  }, [schema, crfData, anchorMeta]);
 
   const allFormKeys = treeData.flatMap(cat => (cat.children || []).map(c => c.key));
   const defaultExpanded = treeData.map(cat => cat.key);
@@ -88,7 +152,7 @@ const FormTree = ({ schema, crfData, selectedForm, onSelect, activeField, setAct
           if (info.node.formName) {
             onSelect({ key: info.node.key, name: info.node.formName });
             if (activeField) {
-              setActiveField(null); // Clear active field when switching forms
+              setActiveField(null);
             }
           }
         }}
@@ -100,9 +164,10 @@ const FormTree = ({ schema, crfData, selectedForm, onSelect, activeField, setAct
 };
 
 /* ─── Document Select Modal Content ───────── */
-const DocSelectContent = ({ documents, selectedFormName, onSelect }) => {
+const DocSelectContent = ({ documents, selectedFormName, onSelect, onUpload, uploading, uploadProgress }) => {
   const [sortMode, setSortMode] = React.useState('date');
   const [sortOrder, setSortOrder] = React.useState('desc');
+  const [activeTab, setActiveTab] = React.useState('select'); // 'select' | 'upload'
 
   const sortedDocs = React.useMemo(() => {
     if (!documents || documents.length === 0) return [];
@@ -144,88 +209,171 @@ const DocSelectContent = ({ documents, selectedFormName, onSelect }) => {
 
   return (
     <>
-      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
-        从该患者的已有文档中选择一份，针对 <strong>{selectedFormName}</strong> 表单进行靶向抽取。
-      </div>
+      {/* Tab 切换：选择已有 / 上传新文档 */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14,
-        padding: '8px 12px', background: '#f8fafc', borderRadius: 8,
-        border: '1px solid #f0f0f0',
+        display: 'flex', gap: 0, marginBottom: 16, borderBottom: '1px solid #f0f0f0',
       }}>
-        <span style={{ fontSize: 12, color: '#6b7280', flexShrink: 0 }}>分组方式：</span>
-        <Select
-          value={sortMode}
-          onChange={v => setSortMode(v)}
-          size="small"
-          style={{ width: 140 }}
-          options={[
-            { value: 'date', label: '📅 按生效日期' },
-            { value: 'type', label: '📂 按文档类型' },
-          ]}
-        />
-        <span style={{ fontSize: 12, color: '#6b7280', flexShrink: 0, marginLeft: 8 }}>排序：</span>
-        <Select
-          value={sortOrder}
-          onChange={v => setSortOrder(v)}
-          size="small"
-          style={{ width: 110 }}
-          options={sortMode === 'date'
-            ? [{ value: 'desc', label: '由近到远' }, { value: 'asc', label: '由远到近' }]
-            : [{ value: 'asc', label: 'A → Z' }, { value: 'desc', label: 'Z → A' }]
-          }
-        />
-        <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 'auto' }}>
-          共 {documents?.length || 0} 份文档
-        </span>
+        {[{key: 'select', label: '📂 从已有文档选择'}, {key: 'upload', label: '📤 上传新文档'}].map(tab => (
+          <div
+            key={tab.key}
+            onClick={() => !uploading && setActiveTab(tab.key)}
+            style={{
+              padding: '8px 20px', fontSize: 13, fontWeight: 500, cursor: uploading ? 'not-allowed' : 'pointer',
+              color: activeTab === tab.key ? C.primary : '#6b7280',
+              borderBottom: activeTab === tab.key ? `2px solid ${C.primary}` : '2px solid transparent',
+              transition: 'all 0.2s',
+              opacity: uploading && tab.key !== activeTab ? 0.5 : 1,
+            }}
+          >
+            {tab.label}
+          </div>
+        ))}
       </div>
-      {(!documents || documents.length === 0) ? (
-        <Empty description="该患者暂无文档" />
-      ) : (
-        <div style={{ maxHeight: 420, overflow: 'auto' }}>
-          {groups.map(group => (
-            <div key={group.key} style={{ marginBottom: 12 }}>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '6px 10px', marginBottom: 6,
-                background: '#f3f4f6', borderRadius: 6,
-              }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{group.label}</span>
-                <Tag style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 6px' }}>{group.count}</Tag>
+
+      {activeTab === 'upload' ? (
+        /* ── 上传新文档 Tab ── */
+        <div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
+            上传一份新文档，系统将自动执行 OCR → 元数据提取 → 绑定患者 → 针对 <strong>{selectedFormName}</strong> 表单进行靶向抽取。
+          </div>
+          {uploading ? (
+            <div style={{
+              padding: '40px 20px', textAlign: 'center',
+              background: '#f8fafc', borderRadius: 12, border: '1px solid #e8e8ec',
+            }}>
+              <LoadingOutlined style={{ fontSize: 32, color: C.primary, marginBottom: 12 }} />
+              <div style={{ fontSize: 14, fontWeight: 500, color: C.textPrimary, marginBottom: 8 }}>文档上传中...</div>
+              <Progress
+                percent={uploadProgress}
+                status="active"
+                strokeColor={{ '0%': '#4f46e5', '100%': '#8b5cf6' }}
+                style={{ maxWidth: 300, margin: '0 auto' }}
+              />
+              <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 8 }}>
+                上传完成后将自动进入 OCR → 元数据 → CRF 抽取流水线
               </div>
-              {group.docs.map(doc => (
-                <div
-                  key={doc.document_id}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '10px 14px', marginBottom: 4, marginLeft: 8,
-                    border: `1px solid ${C.border}`, borderRadius: 8,
-                    cursor: 'pointer', transition: 'all 0.2s',
-                    background: '#fff',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#f0f5ff'; e.currentTarget.style.borderColor = '#91caff'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.borderColor = C.border; }}
-                  onClick={() => onSelect(doc.document_id)}
-                >
-                  <FileTextOutlined style={{ fontSize: 18, color: C.primary, flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: C.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {doc.file_name || doc.original_filename || doc.document_id.slice(0, 12)}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2, display: 'flex', gap: 6, alignItems: 'center' }}>
-                      {doc.doc_type && <Tag color="blue" bordered={false} style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{doc.doc_type}</Tag>}
-                      {doc.doc_date && <span>{doc.doc_date}</span>}
-                      {doc.original_filename && doc.original_filename !== doc.file_name && <span style={{ color: '#d1d5db' }}>·</span>}
-                      {doc.original_filename && doc.original_filename !== doc.file_name && <span>{doc.original_filename}</span>}
-                    </div>
+            </div>
+          ) : (
+            <Upload.Dragger
+              accept=".pdf,.jpg,.jpeg,.png,.tiff"
+              multiple={false}
+              showUploadList={false}
+              beforeUpload={(file) => {
+                const ALLOWED = ['application/pdf', 'image/jpeg', 'image/png', 'image/tiff'];
+                const ok = ALLOWED.includes(file.type) || file.name.match(/\.(pdf|jpg|jpeg|png|tiff)$/i);
+                if (!ok) {
+                  message.warning('仅支持 PDF、JPG、PNG、TIFF 格式');
+                  return false;
+                }
+                onUpload(file);
+                return false;
+              }}
+              style={{
+                padding: '30px 20px',
+                borderRadius: 12,
+                border: '2px dashed #d9d9d9',
+                background: '#fafbfd',
+              }}
+            >
+              <p style={{ marginBottom: 8 }}>
+                <InboxOutlined style={{ fontSize: 36, color: C.primary }} />
+              </p>
+              <p style={{ fontSize: 14, fontWeight: 500, color: C.textPrimary, marginBottom: 4 }}>
+                点击或拖拽文件到此区域
+              </p>
+              <p style={{ fontSize: 12, color: '#9ca3af' }}>
+                支持 PDF、JPG、PNG、TIFF 格式
+              </p>
+            </Upload.Dragger>
+          )}
+        </div>
+      ) : (
+        /* ── 选择已有文档 Tab ── */
+        <>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
+            从该患者的已有文档中选择一份，针对 <strong>{selectedFormName}</strong> 表单进行靶向抽取。
+          </div>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14,
+            padding: '8px 12px', background: '#f8fafc', borderRadius: 8,
+            border: '1px solid #f0f0f0',
+          }}>
+            <span style={{ fontSize: 12, color: '#6b7280', flexShrink: 0 }}>分组方式：</span>
+            <Select
+              value={sortMode}
+              onChange={v => setSortMode(v)}
+              size="small"
+              style={{ width: 140 }}
+              options={[
+                { value: 'date', label: '📅 按生效日期' },
+                { value: 'type', label: '📂 按文档类型' },
+              ]}
+            />
+            <span style={{ fontSize: 12, color: '#6b7280', flexShrink: 0, marginLeft: 8 }}>排序：</span>
+            <Select
+              value={sortOrder}
+              onChange={v => setSortOrder(v)}
+              size="small"
+              style={{ width: 110 }}
+              options={sortMode === 'date'
+                ? [{ value: 'desc', label: '由近到远' }, { value: 'asc', label: '由远到近' }]
+                : [{ value: 'asc', label: 'A → Z' }, { value: 'desc', label: 'Z → A' }]
+              }
+            />
+            <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 'auto' }}>
+              共 {documents?.length || 0} 份文档
+            </span>
+          </div>
+          {(!documents || documents.length === 0) ? (
+            <Empty description="该患者暂无文档" />
+          ) : (
+            <div style={{ maxHeight: 420, overflow: 'auto' }}>
+              {groups.map(group => (
+                <div key={group.key} style={{ marginBottom: 12 }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 10px', marginBottom: 6,
+                    background: '#f3f4f6', borderRadius: 6,
+                  }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>{group.label}</span>
+                    <Tag style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 6px' }}>{group.count}</Tag>
                   </div>
-                  {doc.trace?.status === 'SUCCESS' && <Tag color="green" style={{ margin: 0, fontSize: 10 }}>已抽取</Tag>}
-                  {doc.trace?.status === 'RUNNING' && <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>抽取中</Tag>}
-                  {doc.trace?.status === 'FAILED' && <Tag color="red" style={{ margin: 0, fontSize: 10 }}>失败</Tag>}
+                  {group.docs.map(doc => (
+                    <div
+                      key={doc.document_id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '10px 14px', marginBottom: 4, marginLeft: 8,
+                        border: `1px solid ${C.border}`, borderRadius: 8,
+                        cursor: 'pointer', transition: 'all 0.2s',
+                        background: '#fff',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#f0f5ff'; e.currentTarget.style.borderColor = '#91caff'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.borderColor = C.border; }}
+                      onClick={() => onSelect(doc.document_id)}
+                    >
+                      <FileTextOutlined style={{ fontSize: 18, color: C.primary, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: C.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {doc.file_name || doc.original_filename || doc.document_id.slice(0, 12)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2, display: 'flex', gap: 6, alignItems: 'center' }}>
+                          {doc.doc_type && <Tag color="blue" bordered={false} style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{doc.doc_type}</Tag>}
+                          {doc.doc_date && <span>{doc.doc_date}</span>}
+                          {doc.original_filename && doc.original_filename !== doc.file_name && <span style={{ color: '#d1d5db' }}>·</span>}
+                          {doc.original_filename && doc.original_filename !== doc.file_name && <span>{doc.original_filename}</span>}
+                        </div>
+                      </div>
+                      {doc.trace?.status === 'SUCCESS' && <Tag color="green" style={{ margin: 0, fontSize: 10 }}>已抽取</Tag>}
+                      {doc.trace?.status === 'RUNNING' && <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>抽取中</Tag>}
+                      {doc.trace?.status === 'FAILED' && <Tag color="red" style={{ margin: 0, fontSize: 10 }}>失败</Tag>}
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </>
   );
@@ -238,6 +386,8 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
   const [isDirty, setIsDirty] = React.useState(false);
   const [docSelectOpen, setDocSelectOpen] = React.useState(false);
   const [extracting, setExtracting] = React.useState(false);
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadProgress, setUploadProgress] = React.useState(0);
 
   React.useEffect(() => {
     setEditingData(JSON.parse(JSON.stringify(crfData?.[selectedFormName] || {})));
@@ -248,33 +398,33 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
     setEditingData(prev => {
       const nd = { ...prev };
       let fieldVal = nd[fieldName];
-      
+
       if (rowIndex === undefined) {
-         if (fieldVal && typeof fieldVal === 'object' && 'value' in fieldVal) {
-             nd[fieldName] = { ...fieldVal, value: newVal };
-         } else {
-             nd[fieldName] = newVal;
-         }
+        if (fieldVal && typeof fieldVal === 'object' && 'value' in fieldVal) {
+          nd[fieldName] = { ...fieldVal, value: newVal };
+        } else {
+          nd[fieldName] = newVal;
+        }
       } else {
-         let arr = fieldVal && typeof fieldVal === 'object' && 'value' in fieldVal ? fieldVal.value : fieldVal;
-         if (!Array.isArray(arr)) arr = [];
-         arr = [...arr];
-         
-         if (!arr[rowIndex]) arr[rowIndex] = {};
-         else arr[rowIndex] = { ...arr[rowIndex] };
-         
-         let cell = arr[rowIndex][colName];
-         if (cell && typeof cell === 'object' && 'value' in cell) {
-             arr[rowIndex][colName] = { ...cell, value: newVal };
-         } else {
-             arr[rowIndex][colName] = newVal;
-         }
-         
-         if (fieldVal && typeof fieldVal === 'object' && 'value' in fieldVal) {
-             nd[fieldName] = { ...fieldVal, value: arr };
-         } else {
-             nd[fieldName] = arr;
-          }
+        let arr = fieldVal && typeof fieldVal === 'object' && 'value' in fieldVal ? fieldVal.value : fieldVal;
+        if (!Array.isArray(arr)) arr = [];
+        arr = [...arr];
+
+        if (!arr[rowIndex]) arr[rowIndex] = {};
+        else arr[rowIndex] = { ...arr[rowIndex] };
+
+        let cell = arr[rowIndex][colName];
+        if (cell && typeof cell === 'object' && 'value' in cell) {
+          arr[rowIndex][colName] = { ...cell, value: newVal };
+        } else {
+          arr[rowIndex][colName] = newVal;
+        }
+
+        if (fieldVal && typeof fieldVal === 'object' && 'value' in fieldVal) {
+          nd[fieldName] = { ...fieldVal, value: arr };
+        } else {
+          nd[fieldName] = arr;
+        }
       }
       return nd;
     });
@@ -324,6 +474,66 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
     }
   };
 
+  const handleUploadExtract = async (file) => {
+    try {
+      setUploading(true);
+      setUploadProgress(0);
+
+      // 1. 获取 OSS 上传凭证
+      const signRes = await getUploadSignature();
+      const payload = signRes.data || signRes;
+      const { accessKeyId, accessKeySecret, stsToken, region, bucket, dir } = payload;
+
+      if (!stsToken) throw new Error('未获取到 OSS STS 令牌');
+
+      const formattedRegion = region.startsWith('oss-') ? region : `oss-${region}`;
+      const client = new OSS({
+        region: formattedRegion,
+        accessKeyId,
+        accessKeySecret,
+        stsToken,
+        bucket,
+      });
+
+      // 2. 上传到 OSS
+      const ossKey = `${dir}${Date.now()}_${file.name}`;
+      await client.multipartUpload(ossKey, file, {
+        parallel: 3,
+        partSize: 5 * 1024 * 1024,
+        progress: (p) => setUploadProgress(Math.round(p * 100)),
+      });
+
+      const ossUrl = `${bucket}.${region}.aliyuncs.com/${ossKey}`;
+      setUploadProgress(100);
+
+      // 3. 调用靶向上传 API（创建文档 + 绑定患者 + 触发 OCR → 元数据 → CRF 抽取）
+      message.loading({ content: '文档已上传，正在创建靶向抽取任务...', key: 'uploadExtract', duration: 0 });
+
+      const res = await uploadForFormExtract(
+        projectId, patientId, selectedFormName,
+        ossUrl, file.name, file.type || 'application/octet-stream', file.size
+      );
+
+      if (res?.success) {
+        setDocSelectOpen(false);
+        message.success({ content: `已触发 ${selectedFormName} 表单靶向抽取，稍后自动刷新。`, key: 'uploadExtract', duration: 4 });
+        // 阶梯轮询（上传 → OCR → 元数据 → CRF 抽取，链路更长，延迟更大）
+        const pollTimers = [12000, 24000, 40000, 60000, 90000];
+        pollTimers.forEach(timeout => {
+          setTimeout(() => reloadCurrentForm(), timeout);
+        });
+      } else {
+        message.error({ content: res?.message || '靶向抽取任务创建失败', key: 'uploadExtract', duration: 3 });
+      }
+    } catch (e) {
+      console.error('Upload Extract Error:', e);
+      message.error({ content: '上传失败: ' + (e.message || '网络错误'), key: 'uploadExtract', duration: 4 });
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
   React.useEffect(() => {
     if (isDirty) {
       if (saveTimeoutRef.current) {
@@ -350,10 +560,14 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
   if (loading) return <div style={{ padding: 80, textAlign: 'center' }}><Spin /></div>;
 
   const categories = schema?.categories || [];
+  // selectedFormName 可能是 "表单名" 或 "表单名__锚点值"，查 schema 时只用 base name
+  const baseFormName = selectedFormName?.includes('__')
+    ? selectedFormName.split('__')[0]
+    : selectedFormName;
   let formSchema = null;
   for (const cat of categories) {
     for (const form of (cat.forms || [])) {
-      if (form.name === selectedFormName) { formSchema = form; break; }
+      if (form.name === baseFormName) { formSchema = form; break; }
     }
     if (formSchema) break;
   }
@@ -391,9 +605,9 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
               <CheckCircleOutlined /> 已保存
             </span>
           )}
-          <Button 
-            type="primary" 
-            size="small" 
+          <Button
+            type="primary"
+            size="small"
             disabled={!isDirty && !saving}
             loading={saving}
             onClick={handleManualSave}
@@ -401,9 +615,9 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
           >
             保存
           </Button>
-          <Button 
-            size="small" 
-            icon={extracting ? <Spin size="small" /> : <FileSearchOutlined />} 
+          <Button
+            size="small"
+            icon={extracting ? <Spin size="small" /> : <FileSearchOutlined />}
             style={{ borderRadius: 4 }}
             disabled={extracting}
             onClick={() => setDocSelectOpen(true)}
@@ -411,17 +625,22 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
             靶向抽取
           </Button>
           <Modal
-            title="选择文档进行靶向抽取"
+            title="靶向抽取"
             open={docSelectOpen}
-            onCancel={() => setDocSelectOpen(false)}
+            onCancel={() => !uploading && setDocSelectOpen(false)}
             footer={null}
             width={600}
             destroyOnClose
+            maskClosable={!uploading}
+            closable={!uploading}
           >
             <DocSelectContent
               documents={documents}
               selectedFormName={selectedFormName}
               onSelect={handleExtractFromDoc}
+              onUpload={handleUploadExtract}
+              uploading={uploading}
+              uploadProgress={uploadProgress}
             />
           </Modal>
         </span>
@@ -432,7 +651,7 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
           const isObj = valObj && typeof valObj === 'object' && 'value' in valObj;
           const val = isObj ? valObj.value : valObj;
           let sourceBlocks = isObj ? (valObj.source_blocks || []) : [];
-          
+
           if (Array.isArray(val)) {
             val.forEach(row => {
               if (row && typeof row === 'object') {
@@ -450,15 +669,15 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
               }
             });
           }
-          sourceBlocks = sourceBlocks.filter((b, i, self) => 
+          sourceBlocks = sourceBlocks.filter((b, i, self) =>
             b && b.block_id && self.findIndex(sb => sb && sb.block_id === b.block_id) === i
           );
 
           const filled = val !== undefined && val !== null && String(val).trim() !== '';
-          
+
           return (
-            <div 
-              key={idx} 
+            <div
+              key={idx}
               onClick={() => {
                 const docGroups = {};
                 (sourceBlocks || []).forEach(b => {
@@ -492,33 +711,33 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                         <Table
                           size="small"
                           columns={(field.table_columns || field.sub_fields || []).map((col, i) => ({
-                            title: col.name, 
-                            dataIndex: col.name, 
+                            title: col.name,
+                            dataIndex: col.name,
                             key: i,
                             render: (cellVal, record, rowIndex) => {
                               const strVal = cellVal && typeof cellVal === 'object' && 'value' in cellVal ? cellVal.value : cellVal;
                               return (
-                                <Input.TextArea 
+                                <Input.TextArea
                                   bordered={false}
                                   autoSize={{ minRows: 1 }}
                                   style={{ padding: 0, margin: 0, fontSize: 12.5, minHeight: 22, color: C.textPrimary }}
-                                  value={strVal !== undefined && strVal !== null ? String(strVal) : ''} 
+                                  value={strVal !== undefined && strVal !== null ? String(strVal) : ''}
                                   onChange={e => updateCellValue(field.name, rowIndex, col.name, e.target.value)}
                                   placeholder={`输入 ${col.name}`}
                                 />
                               )
                             }
                           }))}
-                          dataSource={(Array.isArray(val) && val.length > 0 ? val : [{}]).map((row, i) => ({...row, key: i}))}
+                          dataSource={(Array.isArray(val) && val.length > 0 ? val : [{}]).map((row, i) => ({ ...row, key: i }))}
                           pagination={false}
-                          bordered
+                          fe bordered
                         />
                       </div>
                     ) : field.type === 'multirow' ? (
                       <div style={{ marginBottom: 8 }}>
                         {(Array.isArray(val) && val.length > 0 ? val : [{}]).map((row, ri, arr) => (
-                          <div key={ri} style={{ 
-                            padding: '8px 4px', 
+                          <div key={ri} style={{
+                            padding: '8px 4px',
                             borderBottom: ri < arr.length - 1 ? `1px dashed ${C.border}` : 'none',
                             marginBottom: ri < arr.length - 1 ? 4 : 0,
                           }}>
@@ -526,11 +745,11 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                               const k = typeof col === 'string' ? col : col.name;
                               const currentCell = row ? row[k] : undefined;
                               const cellVal = currentCell && typeof currentCell === 'object' && 'value' in currentCell ? currentCell.value : currentCell;
-                              
+
                               return (
                                 <div key={k} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6, paddingRight: 32 }}>
                                   <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0, minWidth: 70, textAlign: 'right', paddingTop: 2 }}>{k}:</span>
-                                  <Input.TextArea 
+                                  <Input.TextArea
                                     bordered={false}
                                     autoSize={{ minRows: 1 }}
                                     style={{ padding: 0, margin: 0, fontSize: 12.5, color: C.textPrimary }}
@@ -546,21 +765,21 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                       </div>
                     ) : field.type === 'enum' ? (
                       <div style={{ marginBottom: 8 }}>
-                        <Select 
+                        <Select
                           bordered={false}
-                          value={val !== undefined && val !== null ? String(val) : undefined} 
-                          style={{ width: '100%', fontSize: 12.5 }} 
+                          value={val !== undefined && val !== null ? String(val) : undefined}
+                          style={{ width: '100%', fontSize: 12.5 }}
                           onChange={v => updateCellValue(field.name, undefined, undefined, v)}
-                          options={(field.enum || []).map(o => ({label: o, value: o}))}
+                          options={(field.enum || []).map(o => ({ label: o, value: o }))}
                           allowClear
                           placeholder="请选择"
                         />
                       </div>
                     ) : (
                       <div style={{ marginBottom: 8 }}>
-                        <Input.TextArea 
+                        <Input.TextArea
                           bordered={false}
-                          autoSize={{minRows: 1, maxRows: 6}}
+                          autoSize={{ minRows: 1, maxRows: 6 }}
                           style={{ padding: 0, margin: 0, fontSize: 12.5, color: C.textPrimary }}
                           value={val !== undefined && val !== null ? String(val) : ''}
                           onChange={e => updateCellValue(field.name, undefined, undefined, e.target.value)}
@@ -578,8 +797,8 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                       });
                       const docIds = Object.keys(docGroups);
                       if (docIds.length === 0) return null;
-                      
-                      const curDocIdx = activeField?.name === field.name && activeField?._docIdx != null 
+
+                      const curDocIdx = activeField?.name === field.name && activeField?._docIdx != null
                         ? Math.min(activeField._docIdx, docIds.length - 1) : 0;
                       const activeDocId = docIds[curDocIdx];
                       const activeBlocks = docGroups[activeDocId] || [];
@@ -592,7 +811,7 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
                               {docIds.map((did, di) => {
                                 const d = (documents || []).find(dd => dd.document_id === did);
                                 return (
-                                  <Tag 
+                                  <Tag
                                     key={did}
                                     color={di === curDocIdx ? 'blue' : 'default'}
                                     style={{ fontSize: 10, padding: '0 6px', lineHeight: '18px', margin: 0, cursor: 'pointer' }}
@@ -639,12 +858,12 @@ const FieldTable = ({ projectId, patientId, schema, crfData, selectedFormName, a
 /* ─── Right Panel: Trace Provenance ────────── */
 const DocumentImageViewer = ({ docUrl, extractedBlocks, docName, mimeType, originalFilename, ocrPageSizes }) => {
   const containerRef = useRef(null);
-  const [scale, setScale] = useState(0); 
+  const [scale, setScale] = useState(0);
   const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
 
-  const isPdf = 
-    mimeType?.includes('pdf') || 
-    originalFilename?.toLowerCase().endsWith('.pdf') || 
+  const isPdf =
+    mimeType?.includes('pdf') ||
+    originalFilename?.toLowerCase().endsWith('.pdf') ||
     (docName && docName.toLowerCase().endsWith('.pdf'));
 
   const handleImageLoad = (e) => {
@@ -671,10 +890,10 @@ const DocumentImageViewer = ({ docUrl, extractedBlocks, docName, mimeType, origi
           <div onClick={() => setScale(s => Math.max(0.1, s - 0.1))} style={{ cursor: 'pointer', color: C.textDim, padding: 2 }}><ZoomOutOutlined /></div>
           <span style={{ fontSize: 11, color: C.textPrimary, minWidth: 36, textAlign: 'center' }}>{Math.round(drawScale * 100)}%</span>
           <div onClick={() => setScale(s => Math.min(2.0, s + 0.1))} style={{ cursor: 'pointer', color: C.textDim, padding: 2 }}><ZoomInOutlined /></div>
-          
-          <Tag 
-            color="blue" 
-            style={{ fontSize: 10, cursor: 'pointer', marginLeft: 6, border: 'none' }} 
+
+          <Tag
+            color="blue"
+            style={{ fontSize: 10, cursor: 'pointer', marginLeft: 6, border: 'none' }}
             onClick={() => {
               if (containerRef.current) {
                 if (isPdf) {
@@ -689,31 +908,31 @@ const DocumentImageViewer = ({ docUrl, extractedBlocks, docName, mimeType, origi
           </Tag>
         </div>
       </div>
-      
+
       <div ref={containerRef} style={{ width: '100%', position: 'relative', overflow: isPdf ? 'hidden' : 'auto', height: 600 }}>
         {isPdf ? (
-          <PdfViewer 
-            url={docUrl} 
-            scale={scale === 0 ? 0 : drawScale} 
-            extractedBlocks={extractedBlocks} 
+          <PdfViewer
+            url={docUrl}
+            scale={scale === 0 ? 0 : drawScale}
+            extractedBlocks={extractedBlocks}
             ocrPageSizes={ocrPageSizes}
             onInitScale={(s) => setScale(s)}
           />
         ) : (
-          <div style={{ 
-            position: 'relative', 
-            width: imgSize.w ? imgSize.w * drawScale : '100%', 
+          <div style={{
+            position: 'relative',
+            width: imgSize.w ? imgSize.w * drawScale : '100%',
             height: imgSize.h ? imgSize.h * drawScale : 'auto',
             transformOrigin: 'top left'
           }}>
-            <img 
-              src={docUrl} 
+            <img
+              src={docUrl}
               alt="Source Document"
               onLoad={handleImageLoad}
               style={{ width: '100%', height: '100%', display: 'block' }}
               crossOrigin="anonymous"
             />
-            
+
             {/* 绘制 Bounding Boxes — normalize OCR pixel coords to image display coords */}
             {imgSize.w > 0 && extractedBlocks && extractedBlocks.map((b, bi) => {
               if (!b.bbox) return null;
@@ -770,10 +989,10 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
         if (res?.success && Array.isArray(res.data)) {
           const history = [];
           const isLegacy = res._legacy === true;
-          
+
           res.data.forEach(item => {
             let docId, actionLabel, actionColor, rawBlocks, value, createdAt;
-            
+
             if (isLegacy) {
               // ── 旧格式：从 PipelineTrace 考古 ──
               const { document_id, field_data, log_entry, trace_created_at } = item;
@@ -797,15 +1016,17 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
               if (action === 'filled') { actionLabel = '新增'; actionColor = '#16a34a'; }
               else if (action === 'conflict') { actionLabel = '冲突'; actionColor = '#d97706'; }
               else if (action === 'same') { actionLabel = '一致'; actionColor = '#6b7280'; }
+              else if (action === 'manual') { actionLabel = '手动修改'; actionColor = '#8b5cf6'; }
+              else if (action === 'adopted') { actionLabel = '采纳'; actionColor = '#0ea5e9'; }
               else { actionLabel = '提取'; actionColor = '#2563eb'; }
             }
-            
+
             const blocks = (rawBlocks || []).map(b => {
               const blk = typeof b === 'string' ? { block_id: b } : { ...b };
               if (!blk.document_id) blk.document_id = docId;
               return blk;
             });
-            
+
             const sourceDocId = blocks.find(b => b.document_id)?.document_id || docId;
             const doc = (documents || []).find(d => d.document_id === sourceDocId);
 
@@ -833,7 +1054,7 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
             const firstBlock = (activeField.sourceBlocks || []).find(b => b.document_id);
             const docId = firstBlock ? firstBlock.document_id : (history[0]?.docId || '');
             const matchDoc = (documents || []).find(d => d.document_id === docId);
-            
+
             history.unshift({
               isCurrentMark: true, // 标识这是当前系统使用的真实值
               docId: docId,
@@ -859,7 +1080,7 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
       }
     };
     fetchHistory();
-// eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeField, selectedFormName, projectId, patientId]);
 
   if (!documents || documents.length === 0) {
@@ -874,7 +1095,7 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
       </div>
     );
   }
-  
+
   if (loading) {
     return <div style={{ padding: 60, textAlign: 'center' }}><Spin /></div>;
   }
@@ -924,9 +1145,9 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
       {/* 上半部分：原文档画板 */}
       <div style={{ flex: '0 0 auto', marginBottom: 16 }}>
         {selectedNode.docUrl ? (
-          <DocumentImageViewer 
-            docUrl={selectedNode.docUrl} 
-            extractedBlocks={currentFieldBlocks} 
+          <DocumentImageViewer
+            docUrl={selectedNode.docUrl}
+            extractedBlocks={currentFieldBlocks}
             docName={selectedNode.docName}
             mimeType={selectedNode.mimeType}
             originalFilename={selectedNode.originalFilename}
@@ -949,7 +1170,7 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
           items={fieldHistory.map((node, i) => ({
             color: i === currentIdx ? '#3b82f6' : '#d1d5db',
             children: (
-              <div 
+              <div
                 onClick={() => setActiveHistoryIdx(i)}
                 style={{
                   cursor: 'pointer',
@@ -965,9 +1186,9 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
                   <Tag color={node.actionColor} style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>{node.actionLabel}</Tag>
                   <span style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'monospace' }}>{node.createdAt}</span>
                   {i === currentIdx && node.actionLabel !== '当前值' && (
-                    <Button 
-                      type="primary" 
-                      size="small" 
+                    <Button
+                      type="primary"
+                      size="small"
                       style={{ marginLeft: 'auto', fontSize: 10, height: 22, padding: '0 8px' }}
                       onClick={async (e) => {
                         e.stopPropagation();
@@ -986,10 +1207,10 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
                               });
                               if (res?.success) {
                                 message.success('已采用该历史值');
-                                if (onAdoptSuccess) onAdoptSuccess({ 
-                                  name: activeField.name, 
+                                if (onAdoptSuccess) onAdoptSuccess({
+                                  name: activeField.name,
                                   value: node.value,
-                                  sourceBlocks: node.blocks 
+                                  sourceBlocks: node.blocks
                                 });
                               } else {
                                 message.error(res?.message || '更新失败');
@@ -1042,11 +1263,11 @@ const TracePanel = ({ projectId, patientId, documents, selectedFormName, activeF
                               <div key={ri} style={{ marginBottom: ri < displayVal.length - 1 ? 6 : 0 }}>
                                 {typeof row === 'object' && row !== null
                                   ? Object.entries(row).map(([k, v]) => (
-                                      <div key={k} style={{ display: 'flex', gap: 6, lineHeight: '20px' }}>
-                                        <span style={{ color: '#6b7280', flexShrink: 0 }}>{k}:</span>
-                                        <span style={{ fontWeight: 500 }}>{String(v ?? '')}</span>
-                                      </div>
-                                    ))
+                                    <div key={k} style={{ display: 'flex', gap: 6, lineHeight: '20px' }}>
+                                      <span style={{ color: '#6b7280', flexShrink: 0 }}>{k}:</span>
+                                      <span style={{ fontWeight: 500 }}>{String(v ?? '')}</span>
+                                    </div>
+                                  ))
                                   : <span>{String(row)}</span>
                                 }
                               </div>
@@ -1089,7 +1310,7 @@ const ProjectPatientDetail = () => {
   const [data, setData] = useState(null);
   const [selectedForm, setSelectedForm] = useState(null);
   const [activeField, setActiveField] = useState(null);
-  
+
   // Lazy-load forms dictionary { [formName]: full_json_data }
   const [fullFormsJson, setFullFormsJson] = useState({});
   const [formLoading, setFormLoading] = useState(false);
@@ -1110,16 +1331,26 @@ const ProjectPatientDetail = () => {
       })
       .catch(() => message.error('获取 CRF 详情网络错误'))
       .finally(() => setLoading(false));
- 
+
   }, [projectId, patientId]);
 
   const reloadCurrentForm = () => {
     if (!selectedForm?.name) return;
     setFormLoading(true);
-    api.get(`/projects/${projectId}/patients/${patientId}/crf-form?form=${encodeURIComponent(selectedForm.name)}`)
-      .then(res => {
-        if (res?.success) {
-          setFullFormsJson(prev => ({ ...prev, [selectedForm.name]: res.data || {} }));
+    // 同时刷新：当前表单详情 + crf-detail（以更新 anchor_meta 和 crf_data 轻量视图）
+    const formReq = api.get(`/projects/${projectId}/patients/${patientId}/crf-form?form=${encodeURIComponent(selectedForm.name)}`);
+    const detailReq = api.get(`/projects/${projectId}/patients/${patientId}/crf-detail`);
+    Promise.all([formReq, detailReq])
+      .then(([formRes, detailRes]) => {
+        if (formRes?.success) {
+          setFullFormsJson(prev => ({ ...prev, [selectedForm.name]: formRes.data || {} }));
+        }
+        if (detailRes?.success && detailRes?.data) {
+          setData(prev => ({
+            ...prev,
+            crf_data: detailRes.data.crf_data,
+            anchor_meta: detailRes.data.anchor_meta,
+          }));
         }
       })
       .finally(() => setFormLoading(false));
@@ -1129,7 +1360,7 @@ const ProjectPatientDetail = () => {
   useEffect(() => {
     if (!selectedForm?.name || fullFormsJson[selectedForm.name]) return;
     reloadCurrentForm();
-// eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedForm?.name, projectId, patientId]);
 
   const meta = data?.patient_meta || {};
@@ -1181,6 +1412,7 @@ const ProjectPatientDetail = () => {
             <FormTree
               schema={data?.template_schema}
               crfData={data?.crf_data}
+              anchorMeta={data?.anchor_meta}
               selectedForm={selectedForm}
               onSelect={(form) => {
                 setSelectedForm(form);

@@ -7,11 +7,25 @@ from ..extensions import db
 from ..models.project import ResearchProject, ProjectPatient
 from ..models.patient import Patient, PatientDocument
 from ..models.crf_template import CrfTemplate
+from ..utils.auth_utils import get_current_user_id
 from sqlalchemy import text
 from celery import chain
 from app.tasks.crf_tasks import extract_crf_from_document
 
 project_bp = Blueprint('project', __name__)
+
+
+def _parse_form_key(form_key: str):
+    """将 'form_name__anchor_value' 拆分为 (form_name, anchor_value)。
+
+    前端传入的 form_name 可能包含 '__' 分隔的锚点后缀：
+      - "住院病案首页"           -> ("住院病案首页", None)
+      - "血常规检查__2024-01-15" -> ("血常规检查", "2024-01-15")
+    """
+    if form_key and "__" in form_key:
+        idx = form_key.index("__")
+        return form_key[:idx], form_key[idx + 2:]
+    return form_key, None
 
 
 def _compute_patient_extraction_status(project_id, patient_id, template_schema=None):
@@ -83,8 +97,11 @@ def _compute_patient_extraction_status(project_id, patient_id, template_schema=N
 
 @project_bp.route('/', methods=['GET'])
 def list_projects():
-    """获取项目列表"""
-    projects = ResearchProject.query.filter_by(is_deleted=False).order_by(ResearchProject.created_at.desc()).all()
+    """获取项目列表（按当前登录用户隔离）"""
+    user_id = get_current_user_id()
+    projects = ResearchProject.query.filter_by(
+        is_deleted=False, creator_id=user_id
+    ).order_by(ResearchProject.created_at.desc()).all()
 
     result = []
     for p in projects:
@@ -285,15 +302,17 @@ def get_crf_field_detail(project_id, patient_id):
 
 @project_bp.route('/<project_id>/patients/<patient_id>/crf-field', methods=['PUT'])
 def update_patient_crf_field(project_id, patient_id):
-    """更新提取结果中的某一个字段值（用于采纳历史结论记录并更新覆盖现有数据）"""
+    """更新提取结果中的某一个字段值（采纳历史值）。form 支持 '表单名' 或 '表单名__锚点值'。"""
     data = request.get_json() or {}
-    form_name = data.get('form')
+    form_key = data.get('form')
     field_name = data.get('field')
     new_value = data.get('value')
     source_blocks = data.get('source_blocks', [])
 
-    if not form_name or not field_name:
+    if not form_key or not field_name:
         return jsonify({"success": False, "message": "缺少必要的参数"}), 400
+
+    form_name, anchor_value = _parse_form_key(form_key)
 
     pp = ProjectPatient.query.filter_by(
         project_id=project_id, patient_id=patient_id, is_deleted=False
@@ -304,10 +323,11 @@ def update_patient_crf_field(project_id, patient_id):
 
     from ..models.crf_field_extraction import CrfFieldExtraction
     
-    # 将之前的 adopted 记录取消
+    # 将同一 anchor 实例中该字段的 adopted 记录取消
     CrfFieldExtraction.query.filter_by(
         project_id=project_id, patient_id=patient_id,
-        form_name=form_name, field_name=field_name, is_adopted=True
+        form_name=form_name, field_name=field_name,
+        anchor_value=anchor_value, is_adopted=True
     ).update({"is_adopted": False})
     
     doc_id = data.get('document_id')
@@ -321,6 +341,7 @@ def update_patient_crf_field(project_id, patient_id):
         document_id=doc_id,
         form_name=form_name,
         field_name=field_name,
+        anchor_value=anchor_value,
         extracted_value=new_value,
         source_blocks=source_blocks,
         merge_action='adopted',
@@ -338,13 +359,16 @@ def update_patient_crf_field(project_id, patient_id):
 
 @project_bp.route('/<project_id>/patients/<patient_id>/crf-form/save', methods=['POST'])
 def save_patient_crf_form(project_id, patient_id):
-    """保存整个表单的手动修改"""
+    """保存整个表单的手动修改。form_name 支持 '表单名' 或 '表单名__锚点值' 格式。"""
     data = request.get_json() or {}
-    form_name = data.get('form_name')
+    form_key = data.get('form_name')
     form_data = data.get('data', {})
 
-    if not form_name or not isinstance(form_data, dict):
+    if not form_key or not isinstance(form_data, dict):
         return jsonify({"success": False, "message": "参数错误"}), 400
+
+    # 解析 form_name 和 anchor_value
+    form_name, anchor_value = _parse_form_key(form_key)
 
     pp = ProjectPatient.query.filter_by(
         project_id=project_id, patient_id=patient_id, is_deleted=False
@@ -356,13 +380,18 @@ def save_patient_crf_form(project_id, patient_id):
     from ..models.crf_field_extraction import CrfFieldExtraction
 
     try:
-        # 1. 查出现有 adopted 记录（先不物理删除，只是设为 is_adopted = False）
-        CrfFieldExtraction.query.filter_by(
+        # 1. 查出当前 adopted 记录（限定在同一 anchor 实例内）
+        q = CrfFieldExtraction.query.filter_by(
             project_id=project_id, patient_id=patient_id,
-            form_name=form_name, is_adopted=True
-        ).update({"is_adopted": False})
+            form_name=form_name, is_adopted=True,
+            anchor_value=anchor_value
+        )
+        existing_adopted = q.all()
+        existing_map = {r.field_name: r for r in existing_adopted}
 
         new_records = []
+        unchanged_fields = set()
+
         for field_name, field_dict in form_data.items():
             if isinstance(field_dict, dict) and "value" in field_dict:
                 val = field_dict["value"]
@@ -371,16 +400,18 @@ def save_patient_crf_form(project_id, patient_id):
                 val = field_dict
                 source_blocks = []
 
+            # 对比已有 adopted 值，判断是否有实际改动
+            existing = existing_map.get(field_name)
+            if existing:
+                old_val = existing.extracted_value
+                if str(old_val).strip() == str(val).strip():
+                    unchanged_fields.add(field_name)
+                    continue  # 值未变，不产生新记录
+
             # 从 source_blocks 获取 document_id (如果有)
             doc_id = None
-            if source_blocks and isinstance(source_blocks, list) and isinstance(source_blocks[0], dict):
+            if source_blocks and isinstance(source_blocks, list) and len(source_blocks) > 0 and isinstance(source_blocks[0], dict):
                 doc_id = source_blocks[0].get("document_id")
-                if not doc_id:
-                    doc_id = None
-
-            # 过滤掉无意义的空值，可根据诉求保留
-            #if val is None or (isinstance(val, str) and not val.strip()):
-            #    continue
 
             rec = CrfFieldExtraction(
                 project_id=project_id,
@@ -388,18 +419,24 @@ def save_patient_crf_form(project_id, patient_id):
                 document_id=doc_id,
                 form_name=form_name,
                 field_name=field_name,
+                anchor_value=anchor_value,
                 extracted_value=val,
-                source_blocks=source_blocks,
-                merge_action='adopted',
+                source_blocks=[],  # 手动修改不需要溯源
+                merge_action='manual',
                 is_adopted=True,
             )
             new_records.append(rec)
 
+        # 把被修改的字段的旧 adopted 记录取消 adopted 标记
         if new_records:
+            changed_field_names = [r.field_name for r in new_records]
+            for r in existing_adopted:
+                if r.field_name in changed_field_names:
+                    r.is_adopted = False
             db.session.add_all(new_records)
-            
+
         db.session.commit()
-        return jsonify({"success": True, "message": "表单保存成功"})
+        return jsonify({"success": True, "message": "表单保存成功", "changed_fields": len(new_records)})
     except Exception as e:
         db.session.rollback()
         return jsonify({"success": False, "message": str(e)}), 500
@@ -685,7 +722,9 @@ def get_patient_crf_detail(project_id, patient_id):
         })
     
     from ..services.crf_assembler import assemble_crf_view_light
-    crf_data_light = assemble_crf_view_light(project_id, patient_id, template_schema)
+    crf_light_full = assemble_crf_view_light(project_id, patient_id, template_schema)
+    anchor_meta = crf_light_full.pop("_anchor_meta", {})
+    crf_data_light = crf_light_full
     
     return jsonify({
         "success": True,
@@ -694,6 +733,7 @@ def get_patient_crf_detail(project_id, patient_id):
             "project_patient_id": pp.id,
             "patient_meta": patient_meta,
             "crf_data": crf_data_light,
+            "anchor_meta": anchor_meta,
             "template_schema": template_schema,
             "documents": doc_traces,
             "enrollment_date": pp.created_at.strftime('%Y-%m-%d') if pp.created_at else '',
@@ -703,8 +743,11 @@ def get_patient_crf_detail(project_id, patient_id):
 
 @project_bp.route('/<project_id>/patients/<patient_id>/crf-form', methods=['GET'])
 def get_patient_crf_form(project_id, patient_id):
-    """获取患者特定表单的完整 JSON（含 source_blocks）"""
-    form_name = request.args.get('form', '')
+    """获取患者特定表单的完整 JSON（含 source_blocks）。
+    
+    form 参数支持 "表单名" 或 "表单名__锚点值" 两种格式。
+    """
+    form_key = request.args.get('form', '')
     
     proj = ResearchProject.query.get(project_id)
     tmpl_schema = None
@@ -714,10 +757,11 @@ def get_patient_crf_form(project_id, patient_id):
     
     from ..services.crf_assembler import assemble_crf_view
     crf = assemble_crf_view(project_id, patient_id, tmpl_schema)
+    crf.pop("_anchor_meta", None)
         
     return jsonify({
         "success": True, 
-        "data": crf.get(form_name, {})
+        "data": crf.get(form_key, {})
     })
 @project_bp.route('/<project_id>/patients/<patient_id>/crf-field-history', methods=['GET'])
 def get_patient_crf_field_history(project_id, patient_id):
@@ -790,16 +834,47 @@ def add_project_patients(project_id):
     try:
         added_count = 0
         for pid in patient_ids:
-            existing = ProjectPatient.query.filter_by(project_id=project_id, patient_id=pid, is_deleted=False).first()
+            existing = ProjectPatient.query.filter_by(project_id=project_id, patient_id=pid).first()
             if not existing:
                 pp = ProjectPatient(project_id=project_id, patient_id=pid)
                 db.session.add(pp)
+                added_count += 1
+            elif existing.is_deleted:
+                existing.is_deleted = False
                 added_count += 1
         db.session.commit()
         return jsonify({"success": True, "message": f"成功添加入组 {added_count} 名患者"}), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
+@project_bp.route('/<project_id>/patients', methods=['DELETE'])
+def remove_project_patients(project_id):
+    """批量移除项目中已入组的患者"""
+    data = request.get_json(silent=True) or {}
+    patient_ids = data.get('patient_ids', [])
+    if not patient_ids:
+        return jsonify({"success": False, "message": "未提供要移除的患者 ID 列表"}), 400
+
+    project = ResearchProject.query.get(project_id)
+    if not project or project.is_deleted:
+        return jsonify({"success": False, "message": "项目不存在"}), 404
+
+    try:
+        removed_count = 0
+        pps = ProjectPatient.query.filter(
+            ProjectPatient.project_id == project_id,
+            ProjectPatient.patient_id.in_(patient_ids),
+            ProjectPatient.is_deleted == False
+        ).all()
+        for pp in pps:
+            pp.is_deleted = True
+            removed_count += 1
+        db.session.commit()
+        return jsonify({"success": True, "message": f"成功移除 {removed_count} 名受试者"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"success": False, "message": str(e)}), 500
 
 @project_bp.route('/<string:project_id>/extract', methods=['POST'])
 def trigger_batch_extraction(project_id):
@@ -904,6 +979,18 @@ def trigger_batch_extraction(project_id):
                 if existing_success:
                     continue
 
+            # 预先创建 PENDING 状态的 Trace 以供前端立即显示排队状态
+            # document_id 在这里还未匹配，使用占位符 "" 以满足数据库 NOT NULL 约束
+            new_trace = PipelineTrace(
+                document_id="",
+                document_name=f"表单抽取: {form_name}",
+                project_id=project_id,
+                patient_id=pp.patient_id,
+                stage='CRF_EXTRACTION',
+                status='PENDING'
+            )
+            db.session.add(new_trace)
+
             task_signatures.append(
                 extract_crf_by_form.si(project_id, pp.patient_id, form_name, documents_meta)
             )
@@ -911,6 +998,9 @@ def trigger_batch_extraction(project_id):
         
         if not task_signatures:
             continue
+            
+        # 集中提交当前患者的所有预排队 Trace
+        db.session.commit()
             
         # 按表单并行下发
         if len(task_signatures) == 1:

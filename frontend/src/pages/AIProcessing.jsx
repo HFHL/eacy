@@ -179,8 +179,11 @@ const AIProcessing = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
   
-  // Grouping Batch Wizard In-page State
-  const CLUSTERS_CACHE_KEY = 'eacy_ai_archive_clusters';
+  // 分组归档向导器状态 —— 缓存 key 绑定到当前用户 ID，防止不同用户间数据泄漏
+  const currentUserId = (() => {
+    try { return JSON.parse(localStorage.getItem('eacy_user') || '{}').id || 'anon'; } catch { return 'anon'; }
+  })();
+  const CLUSTERS_CACHE_KEY = `eacy_ai_archive_clusters_${currentUserId}`;
 
   const [clusters, setClusters] = useState(() => {
     try {
@@ -207,6 +210,11 @@ const AIProcessing = () => {
       // 忽略存储错误（如无痕模式）
     }
   }, [clusters]);
+
+  // 启动时清除旧格式（无用户 ID 后缀）的缓存 key，防止跨用户数据残留
+  useEffect(() => {
+    localStorage.removeItem('eacy_ai_archive_clusters');
+  }, []);
   
   // Document Detail Modal State
   const [detailDoc, setDetailDoc] = useState(null);

@@ -1,5 +1,5 @@
 import datetime
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from sqlalchemy import func
 from ..extensions import db
 from ..models.patient import Patient, PatientDocument
@@ -8,21 +8,24 @@ from ..models.project import ResearchProject, ProjectPatient
 from ..models.ocr_result import OcrResult
 from ..models.metadata_result import MetadataResult
 from ..models.pipeline_trace import PipelineTrace
+from ..utils.auth_utils import get_current_user_id
 
 stats_bp = Blueprint('stats', __name__)
 
 @stats_bp.route('/dashboard', methods=['GET'])
 def get_dashboard_stats():
+    user_id = get_current_user_id()
     today = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # 1. Overview
-    patients_total = Patient.query.filter_by(is_deleted=False).count()
-    documents_total = Document.query.filter_by(is_deleted=False).count()
-    total_projects = ResearchProject.query.filter_by(is_deleted=False).count()
+    # 1. Overview — 按用户隔离
+    patients_total = Patient.query.filter_by(is_deleted=False, uploader_id=user_id).count()
+    documents_total = Document.query.filter_by(is_deleted=False, uploader_id=user_id).count()
+    total_projects = ResearchProject.query.filter_by(is_deleted=False, creator_id=user_id).count()
     
     # 2. Patients Stats
     recently_added_today = Patient.query.filter(
         Patient.is_deleted == False,
+        Patient.uploader_id == user_id,
         Patient.created_at >= today
     ).count()
 
@@ -32,7 +35,8 @@ def get_dashboard_stats():
     ).outerjoin(
         ProjectPatient, ResearchProject.id == ProjectPatient.project_id
     ).filter(
-        ResearchProject.is_deleted == False
+        ResearchProject.is_deleted == False,
+        ResearchProject.creator_id == user_id
     ).group_by(ResearchProject.project_name).all()
 
     colors = ['#1677ff', '#faad14', '#52c41a', '#eb2f96', '#722ed1', '#13c2c2']
@@ -56,12 +60,16 @@ def get_dashboard_stats():
     # 3. Documents Stats
     docs_today_added = Document.query.filter(
         Document.is_deleted == False,
+        Document.uploader_id == user_id,
         Document.created_at >= today
     ).count()
 
     doc_statuses = db.session.query(
         Document.status, func.count(Document.id)
-    ).filter(Document.is_deleted == False).group_by(Document.status).all()
+    ).filter(
+        Document.is_deleted == False,
+        Document.uploader_id == user_id
+    ).group_by(Document.status).all()
     
     status_counts = {k: v for k, v in doc_statuses}
     
@@ -90,12 +98,16 @@ def get_dashboard_stats():
     # 4. Projects Stats
     projects_today = ResearchProject.query.filter(
         ResearchProject.is_deleted == False,
+        ResearchProject.creator_id == user_id,
         ResearchProject.created_at >= today
     ).count()
 
     proj_statuses = db.session.query(
         ResearchProject.status, func.count(ResearchProject.id)
-    ).filter(ResearchProject.is_deleted == False).group_by(ResearchProject.status).all()
+    ).filter(
+        ResearchProject.is_deleted == False,
+        ResearchProject.creator_id == user_id
+    ).group_by(ResearchProject.status).all()
     status_mapping = {'planning': '规划中', 'active': '进行中', 'paused': '暂停', 'completed': '已完成'}
     status_distribution = [
         {"label": status_mapping.get(s, s), "value": count, "color": colors[i % len(colors)]}
@@ -104,7 +116,7 @@ def get_dashboard_stats():
     if not status_distribution:
         status_distribution = [{"label": "暂无", "value": 0, "color": "#d9d9d9"}]
 
-    projects = ResearchProject.query.filter_by(is_deleted=False).all()
+    projects = ResearchProject.query.filter_by(is_deleted=False, creator_id=user_id).all()
     enrollment_progress = []
     extraction_progress = []
     
@@ -209,7 +221,7 @@ def get_active_tasks():
             "status": st,
             "file_name": t.document_name or f"患者 {t.patient_id[:8]} 记录" if t.patient_id else "未知文件",
             "created_at": t.created_at.isoformat() if t.created_at else None,
-            "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+            "updated_at": t.created_at.isoformat() if t.created_at else None,
             "project_id": t.project_id
         })
         

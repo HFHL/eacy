@@ -93,13 +93,18 @@ const doOssUpload = async (file, onProgress) => {
 
   if (!stsToken) throw new Error('未获取到 OSS STS 令牌');
 
-  const formattedRegion = region.startsWith('oss-') ? region : `oss-${region}`;
+  // region 可能带或不带 'oss-' 前缀，OSS SDK 要求不带
+  const sdkRegion = region.startsWith('oss-') ? region : `oss-${region}`;
+  // callback URL 使用完整的 region 字符串（带 oss-）
+  const endpointRegion = region.startsWith('oss-') ? region : `oss-${region}`;
+
   const client = new OSS({
-    region: formattedRegion,
+    region: sdkRegion,
     accessKeyId,
     accessKeySecret,
     stsToken,
     bucket,
+    timeout: 60000,  // 60 秒超时
     refreshSTSToken: async () => {
       const r = await getUploadSignature();
       const rp = r.data || r;
@@ -113,8 +118,8 @@ const doOssUpload = async (file, onProgress) => {
   const checkpoint = savedCp ? JSON.parse(savedCp) : undefined;
 
   await client.multipartUpload(ossKey, file, {
-    parallel: 3,
-    partSize: 5 * 1024 * 1024,
+    parallel: 1,               // 串行上传，避免网络波动导致并发分片失败
+    partSize: 1 * 1024 * 1024, // 1MB/片，小分片更容易重传
     progress: (p, cpt) => {
       if (cpt) localStorage.setItem(cpKey, JSON.stringify(cpt));
       onProgress(Math.round(p * 100));
@@ -124,8 +129,10 @@ const doOssUpload = async (file, onProgress) => {
 
   localStorage.removeItem(cpKey);
 
+  // 构建正确的 OSS URL（bucket.endpoint/key 格式）
+  const ossUrl = `${bucket}.${endpointRegion}.aliyuncs.com/${ossKey}`;
   await reportUploadCallback(
-    `${bucket}.${region}.aliyuncs.com/${ossKey}`,
+    ossUrl,
     file.name,
     file.type || 'application/octet-stream',
     file.size

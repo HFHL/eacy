@@ -523,6 +523,27 @@ def extract_crf_by_form(self, project_id: str, patient_id: str, form_name: str, 
         if not form_schema:
             return {"status": "error", "message": f"Form '{form_name}' not found in template."}
 
+        # 把预创建的 PENDING Trace 抢先置为 RUNNING，前端立即响应
+        trace = PipelineTrace.query.filter_by(
+            project_id=project_id,
+            patient_id=patient_id,
+            document_name=f"表单抽取: {form_name}",
+            stage='CRF_EXTRACTION'
+        ).filter(PipelineTrace.status.in_(['PENDING', 'RUNNING'])).first()
+
+        if not trace:
+            trace = PipelineTrace(
+                document_id="",
+                document_name=f"表单抽取: {form_name}",
+                project_id=project_id,
+                patient_id=patient_id,
+                stage='CRF_EXTRACTION'
+            )
+            db.session.add(trace)
+
+        trace.status = 'RUNNING'
+        db.session.commit()
+
         # 在 Worker 内执行 LLM 的 Form→Documents 智能匹配
         if target_document_ids:
             document_ids = target_document_ids
@@ -538,19 +559,14 @@ def extract_crf_by_form(self, project_id: str, patient_id: str, form_name: str, 
             document_ids, routing_trace = match_documents_for_form(form_schema, documents_meta, topK=topK)
         
         if not document_ids:
-            # 如果没有匹配到相关文档，直接返回成功并跳过
+            # 如果没匹配到文档，标记失败并结束
+            trace.status = 'FAILED'
+            trace.error_message = "No relevant documents matched for this form."
+            db.session.commit()
             return {"status": "skipped", "message": "No relevant documents matched for this form."}
 
-        # 记录 Trace
-        trace = PipelineTrace(
-            document_id=document_ids[0] if document_ids else None,
-            document_name=f"表单抽取: {form_name}",
-            project_id=project_id,
-            patient_id=patient_id,
-            stage='CRF_EXTRACTION',
-            status='RUNNING'
-        )
-        db.session.add(trace)
+        # 匹配成功后更新绑定的 document_id
+        trace.document_id = document_ids[0]
         db.session.commit()
 
         start_time = time.time()

@@ -3,6 +3,7 @@ import uuid
 from flask import Blueprint, request, jsonify, current_app
 from ..models.document import Document
 from ..extensions import db
+from ..utils.auth_utils import get_current_user_id
 import oss2
 
 document_bp = Blueprint('document', __name__)
@@ -83,7 +84,7 @@ def register_oss_document():
     if not data or not data.get('oss_url') or not data.get('filename'):
         return jsonify({"success": False, "message": "缺失文件核心属性 (url/filename)"}), 400
         
-    uploader_id = int(request.headers.get("X-User-Id", 1))
+    uploader_id = get_current_user_id()
     doc_id = str(uuid.uuid4())
     
     new_doc = Document(
@@ -124,7 +125,13 @@ def list_documents():
     - task_status: 按状态筛选，多个用逗号分隔（如 uploaded,parsing,archived）
     - keyword: 按文件名模糊搜索
     """
-    user_id = int(request.headers.get('X-User-Id', 1))
+    user_id = get_current_user_id()
+    # === DEBUG ===
+    import sys
+    auth_hdr = request.headers.get('Authorization', 'MISSING')
+    x_uid = request.headers.get('X-User-Id', 'MISSING')
+    print(f"[DEBUG list_documents] Authorization={auth_hdr!r}  X-User-Id={x_uid!r}  resolved user_id={user_id}", flush=True, file=sys.stderr)
+    # === END DEBUG ===
     
     # 基础查询
     query = Document.query.filter_by(is_deleted=False, uploader_id=user_id)
@@ -208,7 +215,7 @@ def list_documents():
 @document_bp.route('/<doc_id>', methods=['DELETE'])
 def delete_document(doc_id):
     """软删除指定文档（带有用户鉴权租户隔离）"""
-    user_id = int(request.headers.get('X-User-Id', 1))
+    user_id = get_current_user_id()
     doc = Document.query.filter_by(id=doc_id, uploader_id=user_id).first()
     
     if not doc:
@@ -405,6 +412,7 @@ def archive_document(doc_id):
                 break
 
         # 5. 没找到则创建新患者
+        uploader_id = get_current_user_id()
         if not patient:
             patient = Patient(
                 metadata_json={k: result.get(k) for k in [
@@ -412,7 +420,8 @@ def archive_document(doc_id):
                     '唯一标识符', '机构名称', '科室信息', '联系电话'
                 ] if result.get(k)},
                 identifiers=identifiers,
-                document_count=0
+                document_count=0,
+                uploader_id=uploader_id
             )
             db.session.add(patient)
             db.session.flush()

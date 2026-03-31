@@ -183,16 +183,26 @@ def extract_metadata(self, document_id: str, ocr_result_id: str = None, trigger_
                 patient_id = trigger_form_extract.get("patient_id")
                 form_name = trigger_form_extract.get("form_name")
                 
-                # 构建简易 documents_meta，因为是强制提取，所以不需要精确的 Metadata
-                pd = PatientDocument.query.filter_by(document_id=document_id).first()
+                # 用真实的元数据提取结果更新 PatientDocument 记录
+                pd = PatientDocument.query.filter_by(document_id=document_id, is_deleted=False).first()
+                if pd and result:
+                    pd.doc_type = result.get("文档类型") or pd.doc_type
+                    pd.doc_subtype = result.get("文档子类型") or pd.doc_subtype
+                    pd.doc_title = result.get("文档标题") or pd.doc_title
+                    pd.doc_date = result.get("文档日期") or pd.doc_date
+                    db.session.commit()
+                    print(f"[META] 📋 Updated PatientDocument metadata: type={pd.doc_type}, title={pd.doc_title}")
+                
+                # 用真实元数据构建 documents_meta
                 documents_meta = [{
                     "doc_id": document_id,
                     "title": pd.doc_title if pd else (doc.filename or "上传的文档"),
-                    "type": pd.doc_type if pd else "自动检测",
+                    "type": pd.doc_type if pd else "未分类",
                     "subtype": pd.doc_subtype if pd else "",
-                    "filename": doc.filename or "自动检测",
+                    "filename": doc.filename or "",
                 }]
                 
+                # 用户已指定文档-表单匹配，直接靶向抽取
                 extract_crf_by_form.delay(
                     project_id=project_id,
                     patient_id=patient_id,

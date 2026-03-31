@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
+import Register from './pages/Register';
 import MainLayout from './layout/MainLayout';
 import Dashboard from './pages/Dashboard';
 import Projects from './pages/Projects';
@@ -19,6 +20,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
         
         {/* 受保护的主布局路由 */}
         <Route path="/" element={<MainLayout />}>

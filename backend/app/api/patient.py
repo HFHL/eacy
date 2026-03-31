@@ -1,17 +1,19 @@
 from flask import Blueprint, jsonify, request
 from ..models.patient import Patient, PatientDocument
 from ..extensions import db
+from ..utils.auth_utils import get_current_user_id
 
 patient_bp = Blueprint('patient', __name__)
 
 @patient_bp.route('/', methods=['GET'])
 def get_patients():
-    """获取患者列表（病历夹列表）"""
+    """获取患者列表（病历夹列表）—— 按当前登录用户隔离"""
+    user_id = get_current_user_id()
     page = int(request.args.get('page', 1))
     size = int(request.args.get('size', 10))
     keyword = request.args.get('keyword', '').strip()
 
-    query = Patient.query.filter_by(is_deleted=False)
+    query = Patient.query.filter_by(is_deleted=False, uploader_id=user_id)
 
     if keyword:
         # 支持按姓名或证件号模糊查询（在 JSONB 中查询）

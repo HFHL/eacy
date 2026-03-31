@@ -3,6 +3,7 @@ from ..models.document import Document
 from ..models.patient import Patient, PatientDocument
 from ..models.metadata_result import MetadataResult
 from ..extensions import db
+from ..utils.auth_utils import get_current_user_id
 import uuid
 
 batch_bp = Blueprint('batch', __name__, url_prefix='/api/batch')
@@ -157,8 +158,9 @@ def batch_preflight():
             if rid not in clusters[root]['raw_identifiers']:
                 clusters[root]['raw_identifiers'].append(rid)
                 
-    # 4. Match against Patient DB to determine 4-tier confidence
-    all_patients = Patient.query.filter_by(is_deleted=False).all()
+    # 4. Match against Patient DB to determine 4-tier confidence (only current user's patients)
+    user_id = get_current_user_id()
+    all_patients = Patient.query.filter_by(is_deleted=False, uploader_id=user_id).all()
     results = []
     
     for root, cluster in clusters.items():
@@ -248,6 +250,7 @@ def batch_commit():
     }
     """
     data = request.json or {}
+    user_id = get_current_user_id()
     
     tasks = []
     if 'assignments' in data:
@@ -285,7 +288,8 @@ def batch_commit():
         if action == 'CREATE_PATIENT':
             patient = Patient(
                 metadata_json=final_metadata,
-                identifiers=final_identifiers
+                identifiers=final_identifiers,
+                uploader_id=user_id
             )
             db.session.add(patient)
             db.session.flush()

@@ -120,7 +120,7 @@ if pg_isready -q 2>/dev/null; then
 else
     warn "PostgreSQL 未运行，尝试启动..."
     if command -v brew &>/dev/null; then
-        brew services start postgresql@16 2>/dev/null || brew services start postgresql 2>/dev/null || true
+        brew services start postgresql@17 2>/dev/null || brew services start postgresql@16 2>/dev/null || brew services start postgresql 2>/dev/null || true
         sleep 2
         if pg_isready -q 2>/dev/null; then
             log "PostgreSQL 已启动"
@@ -147,7 +147,7 @@ BACKEND_PID=$!
 echo $BACKEND_PID > "$LOG_DIR/backend.pid"
 
 # Celery Worker
-celery -A celery_worker.celery worker --loglevel=info > "$LOG_DIR/celery.log" 2>&1 &
+celery -A celery_worker.celery worker --loglevel=info --concurrency=4 > "$LOG_DIR/celery.log" 2>&1 &
 CELERY_PID=$!
 echo $CELERY_PID > "$LOG_DIR/celery.pid"
 
