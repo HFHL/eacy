@@ -147,6 +147,10 @@ export const archiveDocument = async (documentId) => {
   return await api.post(`/documents/${documentId}/archive`);
 };
 
+export const archiveDocumentNew = async (documentId) => {
+  return await api.post(`/documents/${documentId}/archive-new`);
+};
+
 export const getDocumentPreviewUrl = async (documentId) => {
   return await api.get(`/documents/${documentId}/preview-url`);
 };

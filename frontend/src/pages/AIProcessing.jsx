@@ -12,6 +12,7 @@ import {
   Badge,
   message,
   Dropdown,
+  Select,
 } from 'antd';
 import {
   SearchOutlined,
@@ -31,10 +32,11 @@ import {
   FileTextOutlined,
   ExclamationCircleOutlined,
   UserOutlined,
+  UserAddOutlined,
   RightOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import api, { getDocumentList, getSystemConfig, deleteDocument, reOcrDocument, extractMetadata, archiveDocument } from '../api/document';
+import api, { getDocumentList, getSystemConfig, deleteDocument, reOcrDocument, extractMetadata, archiveDocument, archiveDocumentNew } from '../api/document';
 import { getPatients } from '../api/patient';
 import UploadPanel from '../components/UploadPanel';
 import DocumentDetailModal from '../components/DocumentDetailModal';
@@ -182,6 +184,9 @@ const AIProcessing = () => {
   const [searchText, setSearchText] = useState('');
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
+  const [batchAssignModalOpen, setBatchAssignModalOpen] = useState(false);
+  const [assignTargetPatientId, setAssignTargetPatientId] = useState(null);
+  const [assigningDocs, setAssigningDocs] = useState([]);
   
   // 分组归档向导器状态 —— 缓存 key 绑定到当前用户 ID，防止不同用户间数据泄漏
   const currentUserId = (() => {
@@ -350,6 +355,7 @@ const AIProcessing = () => {
       const newClusters = clusters.filter(c => c.cluster_id !== cid);
       setClusters(newClusters);
       setPendingCommit(null);
+      setSelectedRowKeys([]);
       fetchDocuments();
     } catch (e) {
       message.error(e?.response?.data?.message || '归档提交失败');
@@ -453,7 +459,7 @@ const AIProcessing = () => {
     fetchTabCounts();
     getSystemConfig().then(res => {
        if (res && res.data && res.data.max_concurrent_uploads) {
-           MAX_CONCURRENT_UPLOADS = parseInt(res.data.max_concurrent_uploads, 10) || 3;
+           window.MAX_CONCURRENT_UPLOADS = parseInt(res.data.max_concurrent_uploads, 10) || 3;
        }
     }).catch(e => console.error('Failed to load generic config', e));
     // eslint-disable-next-line
@@ -599,7 +605,8 @@ const AIProcessing = () => {
         const items = [
           { key: 'reparse', icon: <ReloadOutlined />, label: '重新识别' },
           { key: 'ai_match', icon: <RobotOutlined />, label: '元数据抽取' },
-          { key: 'archive', icon: <FolderAddOutlined />, label: '归档', disabled: record.status === 'ARCHIVED' },
+          { key: 'archive_new', icon: <UserAddOutlined />, label: '新建患者', disabled: record.status === 'ARCHIVED' },
+          { key: 'archive', icon: <FolderAddOutlined />, label: '推荐归档', disabled: record.status === 'ARCHIVED' },
           { type: 'divider' },
           { key: 'download', icon: <DownloadOutlined />, label: '下载' },
           { key: 'delete', icon: <DeleteOutlined />, label: '删除', danger: true },
@@ -642,8 +649,8 @@ const AIProcessing = () => {
             });
           } else if (e.key === 'archive') {
             Modal.confirm({
-              title: '归档文档',
-              content: `将文档 "${record.filename}" 归档到对应的患者病历夹（需已完成元数据抽取）。`,
+              title: '推荐归档',
+              content: `将文档 "${record.filename}" 归档到匹配的患者病历夹（需已完成元数据抽取）。`,
               okText: '确认归档',
               cancelText: '取消',
               onOk: async () => {
@@ -654,6 +661,24 @@ const AIProcessing = () => {
                   fetchDocuments();
                 } catch (err) {
                   const errMsg = err?.response?.data?.message || '归档失败';
+                  message.error(errMsg);
+                }
+              }
+            });
+          } else if (e.key === 'archive_new') {
+            Modal.confirm({
+              title: '新建患者',
+              content: `将从文档 "${record.filename}" 提取的信息强制新建为一位新患者并归档。`,
+              okText: '确认新建',
+              cancelText: '取消',
+              onOk: async () => {
+                try {
+                  const res = await archiveDocumentNew(record.id);
+                  const data = res.data || res;
+                  message.success(data.message || '新建并归档成功');
+                  fetchDocuments();
+                } catch (err) {
+                  const errMsg = err?.response?.data?.message || '新建患者归档失败';
                   message.error(errMsg);
                 }
               }
@@ -756,30 +781,66 @@ const AIProcessing = () => {
       {/* Main Content Area */}
       <div style={{ padding: '24px', flex: 1, overflow: 'auto' }}>
         
-        {/* Batch Operations Toolbar：集群提示只在"全部"和"待归档" Tab 显示 */}
-        {(selectedRowKeys.length > 0 || (clusters.length > 0 && (activeTab === 'all' || activeTab === 'todo'))) && (
+        {/* Batch Operations Toolbar */}
+        {selectedRowKeys.length > 0 && (
           <div style={{ 
             padding: '12px 16px', 
-            background: clusters.length > 0 ? '#f6ffed' : '#e6f4ff', 
+            background: '#e6f4ff', 
             borderRadius: 4,
             marginBottom: 16, 
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'space-between' 
           }}>
-            <Text style={{ color: clusters.length > 0 ? '#52c41a' : '#1677ff', fontWeight: 500 }}>
-              {clusters.length > 0 ? `已为您智能分组出 ${clusters.length} 个待归档项` : `已选定 ${selectedRowKeys.length} 份文档`}
+            <Text style={{ color: '#1677ff', fontWeight: 500 }}>
+              {`已选定 ${selectedRowKeys.length} 项（文档/分组）`}
             </Text>
             <Space>
-              {clusters.length > 0 ? (
-                <Button size="small" type="primary" danger ghost onClick={() => { setClusters([]); setDecisions({}); }}>取消分组</Button>
-              ) : (
-                <>
-                  <Button size="small" type="primary" ghost>批量解析</Button>
-                  <Button size="small" ghost style={{ borderColor: '#faad14', color: '#faad14' }}>批量归档</Button>
-                  <Button size="small" danger ghost icon={<DeleteOutlined />}>批量删除</Button>
-                </>
-              )}
+              <Button 
+                size="small" 
+                type="primary" 
+                icon={<UserAddOutlined />} 
+                onClick={() => {
+                  const selectedDocs = fileList.filter(d => selectedRowKeys.includes(d.id));
+                  if (selectedDocs.length === 0) {
+                     message.warning('无法找到勾选的实体文档');
+                     return;
+                  }
+                  setPendingCommit({
+                    action: 'CREATE_PATIENT',
+                    cluster: {
+                      cluster_id: 'manual_' + Date.now(),
+                      documents: selectedDocs,
+                      aggregated_identifiers: []
+                    }
+                  });
+                }}
+              >
+                新建患者(手动分组)
+              </Button>
+              <Button size="small" type="primary" ghost>批量解析</Button>
+              <Button 
+                size="small" 
+                ghost 
+                style={{ borderColor: '#faad14', color: '#faad14' }}
+                onClick={async () => {
+                  const selectedDocs = fileList.filter(d => selectedRowKeys.includes(d.id));
+                  if (selectedDocs.length === 0) {
+                     message.warning('无法找到勾选的实体文档');
+                     return;
+                  }
+                  setAssigningDocs(selectedDocs);
+                  setAssignTargetPatientId(null);
+                  setBatchAssignModalOpen(true);
+                  if (patients.length === 0) {
+                      const pRes = await getPatients({ page: 1, size: 500 });
+                      if (pRes?.data?.list) setPatients(pRes.data.list);
+                  }
+                }}
+              >
+                批量归档(指定患者)
+              </Button>
+              <Button size="small" danger ghost icon={<DeleteOutlined />}>批量删除</Button>
             </Space>
           </div>
         )}
@@ -814,10 +875,11 @@ const AIProcessing = () => {
             return {};
           }}
           rowSelection={{
+            checkStrictly: false,
             selectedRowKeys,
             onChange: setSelectedRowKeys,
             getCheckboxProps: (record) => ({
-              disabled: record.isGroup || record.isPatientFolder,
+              disabled: record.isPatientFolder,
             }),
           }}
           pagination={{
@@ -861,6 +923,52 @@ const AIProcessing = () => {
         onClose={() => { setDetailModalOpen(false); setDetailDoc(null); }}
         onRefresh={fetchDocuments}
       />
+
+      {/* Batch Assign Modal */}
+      <Modal
+        title={`将 ${assigningDocs.length} 份文档归入现存档案`}
+        open={batchAssignModalOpen}
+        onCancel={() => setBatchAssignModalOpen(false)}
+        onOk={async () => {
+          if (!assignTargetPatientId) return message.warning('请选择目标患者');
+          try {
+            await api.post('/batch/commit', { 
+              action: 'ASSIGN',
+              patient_id: assignTargetPatientId,
+              document_ids: assigningDocs.map(d => d.id),
+              final_metadata: {},
+              final_identifiers: [], 
+              source: 'MANUAL_BATCH'
+            });
+            message.success(`成功为 ${assigningDocs.length} 份文件执行归档`);
+            setBatchAssignModalOpen(false);
+            setSelectedRowKeys([]);
+            fetchDocuments();
+          } catch (e) {
+            message.error(e?.response?.data?.message || '归档提交失败');
+          }
+        }}
+        okText="确认归档"
+      >
+        <div style={{ padding: '16px 0' }}>
+           <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+             选择下方列表中的已有患者，将强行把勾选的文档挂载到该患者名下。此操作不会合并或修改目标患者的基础信息。
+           </Typography.Text>
+           <Select
+             showSearch
+             style={{ width: '100%' }}
+             placeholder="搜索或选择患者姓名"
+             optionFilterProp="label"
+             value={assignTargetPatientId}
+             onChange={setAssignTargetPatientId}
+             filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+             options={patients.map(p => ({
+               value: p.id,
+               label: `${p.metadata_json?.['患者姓名'] || '未知姓名'} (${p.identifiers?.[0] || '无标识符'})`
+             }))}
+           />
+        </div>
+      </Modal>
 
       {/* Patient Conflict Drawer */}
       <PatientConflictDrawer

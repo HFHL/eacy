@@ -502,7 +502,7 @@ const UploadPanel = ({ onUploadComplete, maxConcurrent = 3, externalOpen, onExte
           </Space>
         }
         placement="right"
-        width={480}
+        style={{ width: 480 }}
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
         extra={

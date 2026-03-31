@@ -485,6 +485,97 @@ def archive_document(doc_id):
         db.session.rollback()
         return jsonify({"success": False, "message": f"归档失败: {str(e)}"}), 500
 
+@document_bp.route('/<doc_id>/archive-new', methods=['POST'])
+def archive_document_new(doc_id):
+    """强制使用文档元数据新建患者并归档（跳过标识符匹配）"""
+    from ..models.metadata_result import MetadataResult
+    from ..models.patient import Patient, PatientDocument
+
+    doc = Document.query.filter_by(id=doc_id, is_deleted=False).first()
+    if not doc:
+        return jsonify({"success": False, "message": "文档不存在"}), 404
+
+    # 1. 获取最新元数据
+    meta = MetadataResult.query.filter_by(
+        document_id=doc_id, is_deleted=False
+    ).order_by(MetadataResult.created_at.desc()).first()
+
+    if not meta or not meta.result_json:
+        return jsonify({"success": False, "message": "请先完成元数据抽取后再建档"}), 400
+
+    result = meta.result_json
+
+    # 2. 提取患者标识（无需再去重匹配，但也要保证有基本信息）
+    identifiers = {}
+    if result.get('患者姓名'):
+        identifiers['患者姓名'] = result['患者姓名']
+    if result.get('唯一标识符'):
+        uid_list = result['唯一标识符']
+        if isinstance(uid_list, list) and len(uid_list) > 0:
+            identifiers['唯一标识符'] = uid_list[0]
+        elif isinstance(uid_list, str):
+            identifiers['唯一标识符'] = uid_list
+
+    if not identifiers:
+        return jsonify({"success": False, "message": "元数据中缺少患者标识信息（姓名/唯一标识符），无法建档"}), 400
+
+    # 3. 检查是否已归档
+    existing_link = PatientDocument.query.filter_by(
+        document_id=doc_id, is_deleted=False
+    ).first()
+    if existing_link:
+        return jsonify({
+            "success": False,
+            "message": "该文档已归档",
+            "data": {"patient_id": existing_link.patient_id}
+        }), 409
+
+    try:
+        uploader_id = get_current_user_id()
+        
+        # 4. 强制新建患者
+        patient = Patient(
+            metadata_json={k: result.get(k) for k in [
+                '患者姓名', '患者性别', '患者年龄', '出生日期',
+                '唯一标识符', '机构名称', '科室信息', '联系电话'
+            ] if result.get(k)},
+            identifiers=identifiers,
+            document_count=0,
+            uploader_id=uploader_id
+        )
+        db.session.add(patient)
+        db.session.flush()
+
+        # 5. 创建关联
+        link = PatientDocument(
+            patient_id=patient.id,
+            document_id=doc_id,
+            doc_type=result.get('文档类型'),
+            doc_subtype=result.get('文档子类型'),
+            doc_title=result.get('文档标题'),
+            doc_date=result.get('文档生效日期'),
+            source='MANUAL_NEW_PATIENT'
+        )
+        db.session.add(link)
+
+        # 6. 更新计数和状态
+        patient.document_count = PatientDocument.query.filter_by(
+            patient_id=patient.id, is_deleted=False
+        ).count()
+
+        doc.status = 'ARCHIVED'
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "code": 0,
+            "data": {"patient_id": patient.id, "patient_name": identifiers.get('患者姓名', '')},
+            "message": f"已新建患者并归档: {identifiers.get('患者姓名', patient.id)}"
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"success": False, "message": f"强制新建建档失败: {str(e)}"}), 500
+
 @document_bp.route('/<doc_id>/trace', methods=['GET'])
 def get_extraction_trace(doc_id):
     """获取文档完整的抽取管道溯源数据（支持多种 Stage）"""

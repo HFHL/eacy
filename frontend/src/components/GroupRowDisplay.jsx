@@ -103,35 +103,7 @@ const GroupRowDisplay = ({ cluster, committingId, executeGroupCommit, patients, 
         )}
 
         {/* TIER 4 */}
-        {cluster.tier === 4 && (
-          <Space>
-            <Text type="danger" style={{ fontSize: 13 }}>全盲孤立</Text>
-            <Select
-              size="small"
-              showSearch
-              placeholder="强行指定患者"
-              style={{ width: 160 }}
-              value={decision}
-              onClick={(e) => e.stopPropagation()}
-              onChange={onDecisionChange}
-              filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
-              options={patients.map(p => ({
-                value: p.id,
-                label: `${p.metadata_json?.['患者姓名'] || '未知'} ${p.identifiers?.length ? '('+p.identifiers[0]+')' : ''}`
-              }))}
-            />
-            <Button 
-              danger 
-              size="small"
-              type="primary"
-              disabled={!decision}
-              loading={committingId === cluster.cluster_id}
-              onClick={(e) => { e.stopPropagation(); executeGroupCommit(cluster, 'ASSIGN', decision); }}
-            >
-              强行归入
-            </Button>
-          </Space>
-        )}
+        {cluster.tier === 4 && null}
       </div>
     </div>
   );
